@@ -62,7 +62,8 @@ jobs:
           # 1. status = "beta"
           # 2. repository = "cp-web-next-test"
           # 3. has branch information
-          TASKS=$(echo "$RESPONSE" | jq -r '.tasks[] | 
+          # Store as proper JSON array
+          TASKS_JSON=$(echo "$RESPONSE" | jq -c '.tasks[] | 
             select(
               .status.status == "beta" and 
               (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
@@ -73,17 +74,17 @@ jobs:
               branch: (.custom_fields[] | select(.name == "Branch") | .value)
             }')
 
-          if [ -z "$TASKS" ] || [ "$TASKS" = "null" ]; then
+          if [ -z "$TASKS_JSON" ] || [ "$TASKS_JSON" = "null" ]; then
             echo "No beta tasks found for cp-web-next-test repository"
             echo "has_tasks=false" >> $GITHUB_OUTPUT
             exit 1
           else
             echo "Found beta tasks for cp-web-next-test:"
-            echo "$TASKS"
+            echo "$TASKS_JSON"
             echo "has_tasks=true" >> $GITHUB_OUTPUT
             # Store as JSON array for proper parsing
             echo "tasks<<EOF" >> $GITHUB_OUTPUT
-            echo "[$TASKS]" | jq -c '.' >> $GITHUB_OUTPUT
+            echo "[$TASKS_JSON]" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           fi
 
