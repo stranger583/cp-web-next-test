@@ -53,7 +53,8 @@ jobs:
           BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
 
           # Fetch tasks from ClickUp API
-          RESPONSE=$(curl -s -H "Authorization: $CLICKUP_API_TOKEN" "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=BETA"
+          RESPONSE=$(curl -s -H "Authorization: $CLICKUP_API_TOKEN" "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=BETA")
+
 
           echo "API Response: $RESPONSE"
 
