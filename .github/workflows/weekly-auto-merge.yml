@@ -121,15 +121,17 @@ jobs:
               
               # Check if branch exists
               if git ls-remote --exit-code --heads origin "$branch_name"; then
-                echo "Merging $branch_name into $BRANCH_NAME"
+                echo "Squash merging $branch_name into $BRANCH_NAME"
                 
-                # Try to merge the branch
-                if git merge "origin/$branch_name" --no-edit; then
-                  echo "Successfully merged $branch_name"
+                # Use squash merge to keep history clean
+                if git merge "origin/$branch_name" --squash --no-edit; then
+                  echo "Successfully squash merged $branch_name"
+                  # Commit the squashed changes with a descriptive message
+                  git commit -m "feat: squash merge $branch_name - $task_name"
                 else
                   echo "Merge conflict detected for $branch_name"
                   echo "::error::Merge conflict detected for task: $task_name (branch: $branch_name)"
-                  git merge --abort
+                  git reset --hard HEAD
                   exit 1
                 fi
               else
