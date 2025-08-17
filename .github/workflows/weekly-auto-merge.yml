@@ -62,8 +62,8 @@ jobs:
           # 1. status = "beta"
           # 2. repository = "cp-web-next-test"
           # 3. has branch information
-          # Store as proper JSON array
-          TASKS_JSON=$(echo "$RESPONSE" | jq -c '.tasks[] | 
+          # Create proper JSON array
+          TASKS_ARRAY=$(echo "$RESPONSE" | jq -c '[.tasks[] | 
             select(
               .status.status == "beta" and 
               (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
@@ -72,19 +72,19 @@ jobs:
             ) | {
               name: .name,
               branch: (.custom_fields[] | select(.name == "Branch") | .value)
-            }')
+            }]')
 
-          if [ -z "$TASKS_JSON" ] || [ "$TASKS_JSON" = "null" ]; then
+          if [ -z "$TASKS_ARRAY" ] || [ "$TASKS_ARRAY" = "[]" ]; then
             echo "No beta tasks found for cp-web-next-test repository"
             echo "has_tasks=false" >> $GITHUB_OUTPUT
             exit 1
           else
             echo "Found beta tasks for cp-web-next-test:"
-            echo "$TASKS_JSON"
+            echo "$TASKS_ARRAY"
             echo "has_tasks=true" >> $GITHUB_OUTPUT
-            # Store as JSON array for proper parsing
+            # Store the JSON array
             echo "tasks<<EOF" >> $GITHUB_OUTPUT
-            echo "[$TASKS_JSON]" >> $GITHUB_OUTPUT
+            echo "$TASKS_ARRAY" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           fi
 
