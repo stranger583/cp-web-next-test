@@ -22,8 +22,8 @@ jobs:
 
       - name: Setup Git
         run: |
-          git config --global user.name "GitHub Actions"
-          git config --global user.email "actions@github.com"
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'actions@github.com'
 
       - name: Create new branch
         id: create_branch
@@ -62,29 +62,38 @@ jobs:
           # 1. status = "beta"
           # 2. repository = "cp-web-next-test"
           # 3. has branch information
-          # Create proper JSON array
-          TASKS_ARRAY=$(echo "$RESPONSE" | jq -c '[.tasks[] | 
+          # Extract task names and branches directly
+          TASK_NAMES=$(echo "$RESPONSE" | jq -r '.tasks[] | 
             select(
               .status.status == "beta" and 
               (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
               (.custom_fields[] | select(.name == "Branch") | .value) != null and
               (.custom_fields[] | select(.name == "Branch") | .value) != ""
-            ) | {
-              name: .name,
-              branch: (.custom_fields[] | select(.name == "Branch") | .value)
-            }]')
+            ) | .name')
 
-          if [ -z "$TASKS_ARRAY" ] || [ "$TASKS_ARRAY" = "[]" ]; then
+          BRANCH_NAMES=$(echo "$RESPONSE" | jq -r '.tasks[] | 
+            select(
+              .status.status == "beta" and 
+              (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
+              (.custom_fields[] | select(.name == "Branch") | .value) != null and
+              (.custom_fields[] | select(.name == "Branch") | .value) != ""
+            ) | (.custom_fields[] | select(.name == "Branch") | .value)')
+
+          if [ -z "$TASK_NAMES" ]; then
             echo "No beta tasks found for cp-web-next-test repository"
             echo "has_tasks=false" >> $GITHUB_OUTPUT
             exit 1
           else
             echo "Found beta tasks for cp-web-next-test:"
-            echo "$TASKS_ARRAY"
+            echo "Task names: $TASK_NAMES"
+            echo "Branch names: $BRANCH_NAMES"
             echo "has_tasks=true" >> $GITHUB_OUTPUT
-            # Store the JSON array
-            echo "tasks<<EOF" >> $GITHUB_OUTPUT
-            echo "$TASKS_ARRAY" >> $GITHUB_OUTPUT
+            # Store as simple strings
+            echo "task_names<<EOF" >> $GITHUB_OUTPUT
+            echo "$TASK_NAMES" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+            echo "branch_names<<EOF" >> $GITHUB_OUTPUT
+            echo "$BRANCH_NAMES" >> $GITHUB_OUTPUT
             echo "EOF" >> $GITHUB_OUTPUT
           fi
 
@@ -98,10 +107,14 @@ jobs:
           # Checkout the auto-created branch
           git checkout $BRANCH_NAME
 
-          # Process each beta task
-          echo "${{ steps.fetch_tasks.outputs.tasks }}" | jq -c '.[]' | while read -r task; do
-            task_name=$(echo "$task" | jq -r '.name')
-            branch_name=$(echo "$task" | jq -r '.branch')
+          # Read task names and branch names into arrays
+          readarray -t TASK_ARRAY <<< "${{ steps.fetch_tasks.outputs.task_names }}"
+          readarray -t BRANCH_ARRAY <<< "${{ steps.fetch_tasks.outputs.branch_names }}"
+
+          # Process each task and branch
+          for i in "${!TASK_ARRAY[@]}"; do
+            task_name="${TASK_ARRAY[$i]}"
+            branch_name="${BRANCH_ARRAY[$i]}"
             
             if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
               echo "Processing task: $task_name with branch: $branch_name"
