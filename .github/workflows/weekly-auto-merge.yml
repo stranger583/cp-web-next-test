@@ -54,7 +54,7 @@ jobs:
 
           # Fetch tasks from ClickUp API
           RESPONSE=$(curl -s -H "Authorization: $CLICKUP_API_TOKEN" \
-            "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?custom_fields=[{\"field_id\":\"status\",\"operator\":\"=\",\"value\":\"beta\"}]")
+            "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=BETA
 
           echo "API Response: $RESPONSE"
 
