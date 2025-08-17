@@ -1,0 +1,123 @@
+name: Create Weekly Beta Branch
+
+on:
+  schedule:
+    # Run at 8:00 AM UTC+8 (00:00 UTC) every Monday
+    - cron: '0 0 * * 1'
+  workflow_dispatch: # Allow manual triggering if needed
+
+env:
+  CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
+  CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
+
+jobs:
+  create_branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          ref: 'master'
+          fetch-depth: 0
+
+      - name: Setup Git
+        run: |
+          git config --global user.name "GitHub Actions"
+          git config --global user.email "actions@github.com"
+
+      - name: Create new branch
+        id: create_branch
+        run: |
+          YEAR=$(date +'%y')
+          WEEK=$(date +'%V')
+          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
+          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
+          echo "Branch name will be: $BRANCH_NAME"
+
+          # Create and push the new branch
+          if git ls-remote --exit-code --heads origin $BRANCH_NAME; then
+            echo "Branch $BRANCH_NAME already exists"
+            echo "branch_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "Branch $BRANCH_NAME does not exist. Creating it."
+            git checkout -b $BRANCH_NAME
+            git push origin $BRANCH_NAME
+            echo "branch_exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch ClickUp Beta Tasks
+        id: fetch_tasks
+        run: |
+          YEAR=$(date +'%y')
+          WEEK=$(date +'%V')
+          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
+
+          # Fetch tasks from ClickUp API
+          RESPONSE=$(curl -s -H "Authorization: $CLICKUP_API_TOKEN" \
+            "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?custom_fields=[{\"field_id\":\"status\",\"operator\":\"=\",\"value\":\"beta\"}]")
+
+          echo "API Response: $RESPONSE"
+
+          # Parse tasks and filter for beta status with "beta" in name
+          TASKS=$(echo "$RESPONSE" | jq -r '.tasks[] | select(.status.status == "beta" and (.name | test("beta"; "i"))) | .name')
+
+          if [ -z "$TASKS" ]; then
+            echo "No beta tasks found with 'beta' in the name"
+            echo "has_tasks=false" >> $GITHUB_OUTPUT
+            exit 1
+          else
+            echo "Found beta tasks:"
+            echo "$TASKS"
+            echo "has_tasks=true" >> $GITHUB_OUTPUT
+            echo "tasks<<EOF" >> $GITHUB_OUTPUT
+            echo "$TASKS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Merge Beta Tasks
+        if: steps.fetch_tasks.outputs.has_tasks == 'true'
+        run: |
+          YEAR=$(date +'%y')
+          WEEK=$(date +'%V')
+          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
+
+          # Checkout the auto-created branch
+          git checkout $BRANCH_NAME
+
+          # Process each beta task
+          while IFS= read -r task_name; do
+            if [ -n "$task_name" ]; then
+              echo "Processing task: $task_name"
+              
+              # Create a branch name from task (sanitize for git)
+              TASK_BRANCH=$(echo "$task_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | sed 's/-\+/-/g' | sed 's/^-\|-$//g')
+              
+              # Check if task branch exists
+              if git ls-remote --exit-code --heads origin "feature/$TASK_BRANCH"; then
+                echo "Merging feature/$TASK_BRANCH into $BRANCH_NAME"
+                
+                # Try to merge the feature branch
+                if git merge "origin/feature/$TASK_BRANCH" --no-edit; then
+                  echo "Successfully merged feature/$TASK_BRANCH"
+                else
+                  echo "Merge conflict detected for feature/$TASK_BRANCH"
+                  echo "::error::Merge conflict detected for task: $task_name (branch: feature/$TASK_BRANCH)"
+                  git merge --abort
+                  exit 1
+                fi
+              else
+                echo "Feature branch feature/$TASK_BRANCH not found for task: $task_name"
+                echo "::error::Feature branch not found for task: $task_name"
+                exit 1
+              fi
+            fi
+          done <<< "${{ steps.fetch_tasks.outputs.tasks }}"
+
+          # Push the merged changes
+          git push origin $BRANCH_NAME
+
+      - name: Handle No Tasks Error
+        if: steps.fetch_tasks.outputs.has_tasks == 'false'
+        run: |
+          echo "::error::No beta tasks found with 'beta' in the name. Please check ClickUp list configuration."
+          exit 1
