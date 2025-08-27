@@ -178,7 +178,7 @@ jobs:
                     echo "   🔄 Changes detected, performing squash merge..."
                     
                     # Use squash merge to keep history clean
-                    if git merge "origin/$branch_name" --squash --no-edit --no-ff; then
+                    if git merge "origin/$branch_name" --squash --no-edit; then
                       # Check if there are changes to commit
                       if ! git diff --cached --quiet; then
                         git commit -m "feat: merge $branch_name - $task_name - Task ID: $task_id - Auto-merged by: GitHub Actions"
