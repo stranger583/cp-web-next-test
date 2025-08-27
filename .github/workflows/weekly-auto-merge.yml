@@ -2,8 +2,8 @@ name: Create Weekly Beta Branch
 
 on:
   schedule:
-    # Run at 8:00 AM UTC+8 (00:00 UTC) every Monday
-    - cron: "0 0 * * 1"
+    # Run at 8:00 AM UTC+8 (00:00 UTC) every Thursday
+    - cron: "0 0 * * 4"
   workflow_dispatch: # Allow manual triggering if needed
 
 env:
@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
         with:
           ref: "master"
           fetch-depth: 0
@@ -28,125 +28,280 @@ jobs:
       - name: Create new branch
         id: create_branch
         run: |
-          YEAR=$(date +'%y')
+          # Use more precise date formatting to avoid cross-year week issues
+          YEAR=$(date +'%Y')
           WEEK=$(date +'%V')
-          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
+          BRANCH_NAME="beta/sprint-$YEAR-W$WEEK-auto"
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "Branch name will be: $BRANCH_NAME"
+          echo "📅 Branch name will be: $BRANCH_NAME"
 
           # Create and push the new branch
-          if git ls-remote --exit-code --heads origin $BRANCH_NAME; then
-            echo "Branch $BRANCH_NAME already exists"
+          if git ls-remote --exit-code --heads origin $BRANCH_NAME >/dev/null 2>&1; then
+            echo "⚠️ Branch $BRANCH_NAME already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "Branch $BRANCH_NAME does not exist. Creating it."
+            echo "✨ Branch $BRANCH_NAME does not exist. Creating it."
             git checkout -b $BRANCH_NAME
-            git push origin $BRANCH_NAME
-            echo "branch_exists=false" >> $GITHUB_OUTPUT
+            if git push origin $BRANCH_NAME; then
+              echo "✅ Successfully created and pushed branch $BRANCH_NAME"
+              echo "branch_exists=false" >> $GITHUB_OUTPUT
+            else
+              echo "::error::❌ Failed to push branch $BRANCH_NAME"
+              exit 1
+            fi
           fi
 
       - name: Fetch ClickUp Beta Tasks
         id: fetch_tasks
         run: |
-          YEAR=$(date +'%y')
-          WEEK=$(date +'%V')
-          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
+          BRANCH_NAME="${{ steps.create_branch.outputs.branch_name }}"
+          echo "🔍 Operating on branch: $BRANCH_NAME"
 
-          # Fetch tasks from ClickUp API with beta status
-          RESPONSE=$(curl -s -H "Authorization: $CLICKUP_API_TOKEN" \
+          # Create cleanup function
+          cleanup() {
+            rm -f /tmp/clickup_response.json /tmp/task_branch_pairs.txt
+          }
+          trap cleanup EXIT
+
+          # Fetch tasks from ClickUp API with better error handling
+          echo "📡 Fetching tasks from ClickUp API..."
+
+          HTTP_CODE=$(curl -w "%{http_code}" -s --max-time 30 \
+            -H "Authorization: $CLICKUP_API_TOKEN" \
+            -H "Content-Type: application/json" \
+            -o /tmp/clickup_response.json \
             "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=beta")
 
-          echo "API Response received"
-
-          # Parse tasks and filter for:
-          # 1. status = "beta"
-          # 2. repository = "cp-web-next-test"
-          # 3. has branch information
-          # Extract task names and branches directly
-          TASK_NAMES=$(echo "$RESPONSE" | jq -r '.tasks[] | 
-            select(
-              .status.status == "beta" and 
-              (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
-              (.custom_fields[] | select(.name == "Branch") | .value) != null and
-              (.custom_fields[] | select(.name == "Branch") | .value) != ""
-            ) | .name')
-
-          BRANCH_NAMES=$(echo "$RESPONSE" | jq -r '.tasks[] | 
-            select(
-              .status.status == "beta" and 
-              (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
-              (.custom_fields[] | select(.name == "Branch") | .value) != null and
-              (.custom_fields[] | select(.name == "Branch") | .value) != ""
-            ) | (.custom_fields[] | select(.name == "Branch") | .value)')
-
-          if [ -z "$TASK_NAMES" ]; then
-            echo "No beta tasks found for cp-web-next-test repository"
-            echo "has_tasks=false" >> $GITHUB_OUTPUT
+          # Check HTTP status code
+          if [ "$HTTP_CODE" != "200" ]; then
+            echo "::error::❌ ClickUp API request failed with HTTP status: $HTTP_CODE"
+            if [ -f /tmp/clickup_response.json ]; then
+              echo "Response content:"
+              cat /tmp/clickup_response.json
+            fi
             exit 1
+          fi
+
+          # Check if response is valid JSON and has no errors
+          if ! jq empty /tmp/clickup_response.json 2>/dev/null; then
+            echo "::error::❌ Invalid JSON response from ClickUp API"
+            echo "Response content:"
+            cat /tmp/clickup_response.json
+            exit 1
+          fi
+
+          # Check for API errors in response
+          if jq -e '.err' /tmp/clickup_response.json >/dev/null 2>&1; then
+            ERROR_MSG=$(jq -r '.err // "Unknown API error"' /tmp/clickup_response.json)
+            echo "::error::❌ ClickUp API returned error: $ERROR_MSG"
+            exit 1
+          fi
+
+          echo "✅ API Response received successfully"
+
+          # Parse tasks and filter with explicit sorting
+          TASK_BRANCH_PAIRS=$(jq -r '.tasks[] | 
+            select(
+              .status.status == "beta" and 
+              (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next" and
+              (.custom_fields[] | select(.name == "Branch") | .value) != null and
+              (.custom_fields[] | select(.name == "Branch") | .value) != ""
+            ) | "\(.name)\t\(.custom_fields[] | select(.name == "Branch") | .value)\t\(.id)"' \
+            /tmp/clickup_response.json | sort)
+
+          if [ -z "$TASK_BRANCH_PAIRS" ]; then
+            echo "ℹ️ No beta tasks found for cp-web-next repository"
+            echo "has_tasks=false" >> $GITHUB_OUTPUT
           else
-            echo "Found beta tasks for cp-web-next-test:"
-            echo "Task names: $TASK_NAMES"
-            echo "Branch names: $BRANCH_NAMES"
+            TASK_COUNT=$(echo "$TASK_BRANCH_PAIRS" | wc -l)
+            echo "🎯 Found $TASK_COUNT beta tasks for cp-web-next:"
+            echo "$TASK_BRANCH_PAIRS" | while IFS=$'\t' read -r task_name branch_name task_id; do
+              echo "  📋 $task_name (Branch: $branch_name)"
+            done
             echo "has_tasks=true" >> $GITHUB_OUTPUT
-            # Store as simple strings
-            echo "task_names<<EOF" >> $GITHUB_OUTPUT
-            echo "$TASK_NAMES" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-            echo "branch_names<<EOF" >> $GITHUB_OUTPUT
-            echo "$BRANCH_NAMES" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            echo "task_count=$TASK_COUNT" >> $GITHUB_OUTPUT
+            # Store the paired data in temp file for better handling
+            echo "$TASK_BRANCH_PAIRS" > /tmp/task_branch_pairs.txt
           fi
 
       - name: Merge Beta Tasks
+        id: merge_beta_tasks
         if: steps.fetch_tasks.outputs.has_tasks == 'true'
         run: |
-          YEAR=$(date +'%y')
-          WEEK=$(date +'%V')
-          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
+          BRANCH_NAME="${{ steps.create_branch.outputs.branch_name }}"
+          TOTAL_TASKS="${{ steps.fetch_tasks.outputs.task_count }}"
+          MERGED_COUNT=0
+          FAILED_TASKS=()
 
-          # Checkout the auto-created branch
+          echo "🚀 Starting merge process for $TOTAL_TASKS tasks..."
+
+          # Enhanced cleanup function for git operations
+          cleanup_git() {
+            git merge --abort 2>/dev/null || true
+            git reset --hard HEAD 2>/dev/null || true
+            git clean -fd 2>/dev/null || true
+          }
+
+          # Cleanup function for temp files
+          cleanup_files() {
+            rm -f /tmp/task_branch_pairs.txt /tmp/merge_summary.txt
+          }
+          trap 'cleanup_git; cleanup_files' EXIT
+
+          # Checkout the target branch
           git checkout $BRANCH_NAME
+          if [ $? -ne 0 ]; then
+            echo "::error::❌ Failed to checkout branch $BRANCH_NAME"
+            exit 1
+          fi
 
-          # Read task names and branch names into arrays
-          readarray -t TASK_ARRAY <<< "${{ steps.fetch_tasks.outputs.task_names }}"
-          readarray -t BRANCH_ARRAY <<< "${{ steps.fetch_tasks.outputs.branch_names }}"
-
-          # Process each task and branch
-          for i in "${!TASK_ARRAY[@]}"; do
-            task_name="${TASK_ARRAY[$i]}"
-            branch_name="${BRANCH_ARRAY[$i]}"
-            
+          # Process each task-branch pair
+          while IFS=$'\t' read -r task_name branch_name task_id; do
             if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
-              echo "Processing task: $task_name with branch: $branch_name"
+              echo ""
+              echo "📦 Processing ($((MERGED_COUNT + 1))/$TOTAL_TASKS): $task_name"
+              echo "   Branch: $branch_name"
               
-              # Check if branch exists
-              if git ls-remote --exit-code --heads origin "$branch_name"; then
-                echo "Squash merging $branch_name into $BRANCH_NAME"
+              # Check if branch exists remotely
+              if git ls-remote --exit-code --heads origin "$branch_name" >/dev/null 2>&1; then
+                echo "   ✅ Branch exists remotely"
                 
-                # Use squash merge to keep history clean
-                if git merge "origin/$branch_name" --squash --no-edit; then
-                  echo "Successfully squash merged $branch_name"
-                  # Commit the squashed changes with a descriptive message
-                  git commit -m "feat: squash merge $branch_name - $task_name"
+                # Fetch the latest version of the branch
+                if git fetch origin "$branch_name" 2>/dev/null; then
+                  echo "   📥 Fetched latest version"
+                  
+                  # Check if there are any changes to merge
+                  if git merge-tree $(git merge-base HEAD "origin/$branch_name") HEAD "origin/$branch_name" | grep -q .; then
+                    echo "   🔄 Changes detected, performing squash merge..."
+                    
+                    # Use squash merge to keep history clean
+                    if git merge "origin/$branch_name" --squash --no-edit --no-ff; then
+                      # Check if there are changes to commit
+                      if ! git diff --cached --quiet; then
+                        git commit -m "feat: merge $branch_name - $task_name - Task ID: $task_id - Auto-merged by: GitHub Actions"
+                        echo "   ✅ Successfully squash merged $branch_name"
+                        MERGED_COUNT=$((MERGED_COUNT + 1))
+                      else
+                        echo "   ℹ️ No changes to commit (already up to date)"
+                        MERGED_COUNT=$((MERGED_COUNT + 1))
+                      fi
+                    else
+                      echo "   ❌ Merge conflict detected for $branch_name"
+                      echo "::error::Merge conflict detected for task: $task_name (branch: $branch_name)"
+                      cleanup_git
+                      FAILED_TASKS+=("$task_name ($branch_name): Merge conflict")
+                    fi
+                  else
+                    echo "   ℹ️ No changes to merge (already up to date)"
+                    MERGED_COUNT=$((MERGED_COUNT + 1))
+                  fi
                 else
-                  echo "Merge conflict detected for $branch_name"
-                  echo "::error::Merge conflict detected for task: $task_name (branch: $branch_name)"
-                  git reset --hard HEAD
-                  exit 1
+                  echo "   ❌ Failed to fetch branch $branch_name"
+                  FAILED_TASKS+=("$task_name ($branch_name): Failed to fetch")
                 fi
               else
-                echo "Branch $branch_name not found for task: $task_name"
-                echo "::error::Branch not found for task: $task_name"
-                exit 1
+                echo "   ❌ Branch $branch_name not found remotely"
+                echo "::warning::Branch not found for task: $task_name"
+                FAILED_TASKS+=("$task_name ($branch_name): Branch not found")
               fi
             fi
-          done
+          done < /tmp/task_branch_pairs.txt
 
-          # Push the merged changes
-          git push origin $BRANCH_NAME
+          # Generate merge summary
+          echo ""
+          echo "📊 Merge Summary:"
+          echo "   Total tasks: $TOTAL_TASKS"
+          echo "   Successfully merged: $MERGED_COUNT"
+          echo "   Failed: ${#FAILED_TASKS[@]}"
 
-      - name: Handle No Tasks Error
-        if: steps.fetch_tasks.outputs.has_tasks == 'false'
+          # Report failed tasks if any
+          if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
+            echo ""
+            echo "❌ Failed tasks:"
+            printf '   %s\n' "${FAILED_TASKS[@]}"
+            
+            # Create summary for GitHub
+            {
+              echo "## Merge Summary"
+              echo ""
+              echo "- ✅ Successfully merged: $MERGED_COUNT/$TOTAL_TASKS tasks"
+              echo "- ❌ Failed: ${#FAILED_TASKS[@]} tasks"
+              echo ""
+              if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
+                echo "### Failed Tasks:"
+                printf '- %s\n' "${FAILED_TASKS[@]}"
+              fi
+            } >> $GITHUB_STEP_SUMMARY
+          fi
+
+          # Push changes if any merges were successful
+          if [ $MERGED_COUNT -gt 0 ]; then
+            echo ""
+            echo "📤 Pushing $MERGED_COUNT successful merges..."
+            if git push origin $BRANCH_NAME; then
+              echo "✅ Successfully pushed all changes"
+              echo "merge_success=true" >> $GITHUB_OUTPUT
+              echo "merged_count=$MERGED_COUNT" >> $GITHUB_OUTPUT
+            else
+              echo "::error::❌ Failed to push changes"
+              exit 1
+            fi
+          else
+            echo "⚠️ No changes to push"
+            echo "merge_success=false" >> $GITHUB_OUTPUT
+            echo "merged_count=0" >> $GITHUB_OUTPUT
+          fi
+
+          # Exit with error if some tasks failed but allow partial success
+          if [ ${#FAILED_TASKS[@]} -gt 0 ] && [ $MERGED_COUNT -eq 0 ]; then
+            echo "::error::❌ All merge operations failed"
+            exit 1
+          elif [ ${#FAILED_TASKS[@]} -gt 0 ]; then
+            echo "::warning::⚠️ Some tasks failed but $MERGED_COUNT tasks were successfully merged"
+          fi
+
+      - name: Handle Different Scenarios
+        if: always()
         run: |
-          echo "::error::No beta tasks found for cp-web-next-test repository. Please check ClickUp list configuration."
-          exit 1
+          BRANCH_EXISTS="${{ steps.create_branch.outputs.branch_exists }}"
+          HAS_TASKS="${{ steps.fetch_tasks.outputs.has_tasks }}"
+          MERGE_SUCCESS="${{ steps.merge_beta_tasks.outputs.merge_success }}"
+          MERGED_COUNT="${{ steps.merge_beta_tasks.outputs.merged_count }}"
+
+          echo "📋 Final Status Summary:"
+          echo "   Branch exists: $BRANCH_EXISTS"
+          echo "   Has tasks: $HAS_TASKS"
+          echo "   Merge success: $MERGE_SUCCESS"
+          echo "   Merged count: $MERGED_COUNT"
+
+          # Generate final summary
+          {
+            echo "## Weekly Beta Branch Creation Summary"
+            echo ""
+            echo "**Branch:** \`${{ steps.create_branch.outputs.branch_name }}\`"
+            echo ""
+            
+            if [ "$BRANCH_EXISTS" = "true" ] && [ "$HAS_TASKS" = "false" ]; then
+              echo "✅ **Status:** Branch already exists, no new tasks to merge (normal situation)"
+            elif [ "$BRANCH_EXISTS" = "false" ] && [ "$HAS_TASKS" = "false" ]; then
+              echo "✅ **Status:** New branch created, no tasks found (normal situation)"
+            elif [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "true" ]; then
+              echo "✅ **Status:** Successfully merged $MERGED_COUNT tasks"
+            elif [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "false" ]; then
+              echo "❌ **Status:** Task merge failed"
+            else
+              echo "ℹ️ **Status:** Workflow completed"
+            fi
+            
+            echo ""
+            echo "**Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          } >> $GITHUB_STEP_SUMMARY
+
+          # Only exit with error for actual failures, not expected scenarios
+          if [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "false" ] && [ "${MERGED_COUNT:-0}" = "0" ]; then
+            echo "::error::❌ Workflow failed due to merge issues"
+            exit 1
+          else
+            echo "✅ Workflow completed successfully"
+            exit 0
+          fi
