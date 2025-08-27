@@ -103,18 +103,18 @@ jobs:
           TASK_BRANCH_PAIRS=$(jq -r '.tasks[] | 
             select(
               .status.status == "beta" and 
-              (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next" and
+              (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
               (.custom_fields[] | select(.name == "Branch") | .value) != null and
               (.custom_fields[] | select(.name == "Branch") | .value) != ""
             ) | "\(.name)\t\(.custom_fields[] | select(.name == "Branch") | .value)\t\(.id)"' \
             /tmp/clickup_response.json | sort)
 
           if [ -z "$TASK_BRANCH_PAIRS" ]; then
-            echo "ℹ️ No beta tasks found for cp-web-next repository"
+            echo "ℹ️ No beta tasks found for cp-web-next-test repository"
             echo "has_tasks=false" >> $GITHUB_OUTPUT
           else
             TASK_COUNT=$(echo "$TASK_BRANCH_PAIRS" | wc -l)
-            echo "🎯 Found $TASK_COUNT beta tasks for cp-web-next:"
+            echo "🎯 Found $TASK_COUNT beta tasks for cp-web-next-test:"
             echo "$TASK_BRANCH_PAIRS" | while IFS=$'\t' read -r task_name branch_name task_id; do
               echo "  📋 $task_name (Branch: $branch_name)"
             done
