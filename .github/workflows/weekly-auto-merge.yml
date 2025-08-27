@@ -146,7 +146,6 @@ jobs:
             git reset --hard HEAD 2>/dev/null || true
             git clean -fd 2>/dev/null || true
           }
-          trap cleanup_git EXIT
 
           # Checkout the target branch
           git checkout $BRANCH_NAME
@@ -158,8 +157,10 @@ jobs:
           # Get task-branch pairs from previous step output
           TASK_BRANCH_PAIRS="${{ steps.fetch_tasks.outputs.task_branch_pairs }}"
 
-          # Process each task-branch pair
-          echo "$TASK_BRANCH_PAIRS" | while IFS=$'\t' read -r task_name branch_name task_id; do
+          # Process each task-branch pair using temporary file to avoid subshell variable scope issues
+          echo "$TASK_BRANCH_PAIRS" > /tmp/tasks_to_process.txt
+
+          while IFS=$'\t' read -r task_name branch_name task_id; do
             if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
               echo ""
               echo "📦 Processing ($((MERGED_COUNT + 1))/$TOTAL_TASKS): $task_name"
@@ -208,7 +209,10 @@ jobs:
                 FAILED_TASKS+=("$task_name ($branch_name): Branch not found")
               fi
             fi
-          done
+          done < /tmp/tasks_to_process.txt
+
+          # Clean up temporary file
+          rm -f /tmp/tasks_to_process.txt
 
           # Generate merge summary
           echo ""
