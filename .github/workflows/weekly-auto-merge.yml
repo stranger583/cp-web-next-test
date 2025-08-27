@@ -13,6 +13,9 @@ env:
 jobs:
   create_branch:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -59,7 +62,7 @@ jobs:
 
           # Create cleanup function
           cleanup() {
-            rm -f /tmp/clickup_response.json /tmp/task_branch_pairs.txt
+            rm -f /tmp/clickup_response.json
           }
           trap cleanup EXIT
 
@@ -120,8 +123,10 @@ jobs:
             done
             echo "has_tasks=true" >> $GITHUB_OUTPUT
             echo "task_count=$TASK_COUNT" >> $GITHUB_OUTPUT
-            # Store the paired data in temp file for better handling
-            echo "$TASK_BRANCH_PAIRS" > /tmp/task_branch_pairs.txt
+            # Store the paired data in outputs for next step
+            echo "task_branch_pairs<<EOF" >> $GITHUB_OUTPUT
+            echo "$TASK_BRANCH_PAIRS" >> $GITHUB_OUTPUT
+            echo "EOF" >> $GITHUB_OUTPUT
           fi
 
       - name: Merge Beta Tasks
@@ -141,12 +146,7 @@ jobs:
             git reset --hard HEAD 2>/dev/null || true
             git clean -fd 2>/dev/null || true
           }
-
-          # Cleanup function for temp files
-          cleanup_files() {
-            rm -f /tmp/task_branch_pairs.txt /tmp/merge_summary.txt
-          }
-          trap 'cleanup_git; cleanup_files' EXIT
+          trap cleanup_git EXIT
 
           # Checkout the target branch
           git checkout $BRANCH_NAME
@@ -155,8 +155,11 @@ jobs:
             exit 1
           fi
 
+          # Get task-branch pairs from previous step output
+          TASK_BRANCH_PAIRS="${{ steps.fetch_tasks.outputs.task_branch_pairs }}"
+
           # Process each task-branch pair
-          while IFS=$'\t' read -r task_name branch_name task_id; do
+          echo "$TASK_BRANCH_PAIRS" | while IFS=$'\t' read -r task_name branch_name task_id; do
             if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
               echo ""
               echo "📦 Processing ($((MERGED_COUNT + 1))/$TOTAL_TASKS): $task_name"
@@ -205,7 +208,7 @@ jobs:
                 FAILED_TASKS+=("$task_name ($branch_name): Branch not found")
               fi
             fi
-          done < /tmp/task_branch_pairs.txt
+          done
 
           # Generate merge summary
           echo ""
@@ -255,9 +258,16 @@ jobs:
           # Exit with error if some tasks failed but allow partial success
           if [ ${#FAILED_TASKS[@]} -gt 0 ] && [ $MERGED_COUNT -eq 0 ]; then
             echo "::error::❌ All merge operations failed"
+            echo "merge_success=false" >> $GITHUB_OUTPUT
+            echo "merged_count=0" >> $GITHUB_OUTPUT
             exit 1
           elif [ ${#FAILED_TASKS[@]} -gt 0 ]; then
             echo "::warning::⚠️ Some tasks failed but $MERGED_COUNT tasks were successfully merged"
+            echo "merge_success=true" >> $GITHUB_OUTPUT
+            echo "merged_count=$MERGED_COUNT" >> $GITHUB_OUTPUT
+          else
+            echo "merge_success=true" >> $GITHUB_OUTPUT
+            echo "merged_count=$MERGED_COUNT" >> $GITHUB_OUTPUT
           fi
 
       - name: Handle Different Scenarios
@@ -301,7 +311,10 @@ jobs:
           if [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "false" ] && [ "${MERGED_COUNT:-0}" = "0" ]; then
             echo "::error::❌ Workflow failed due to merge issues"
             exit 1
+          elif [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "true" ]; then
+            echo "✅ Workflow completed successfully with $MERGED_COUNT tasks merged"
+            exit 0
           else
-            echo "✅ Workflow completed successfully"
+            echo "✅ Workflow completed successfully (no tasks to merge)"
             exit 0
           fi
