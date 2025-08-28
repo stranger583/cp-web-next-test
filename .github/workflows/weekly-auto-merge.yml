@@ -135,7 +135,8 @@ jobs:
           # Enhanced cleanup function for git operations
           cleanup_git() {
             git merge --abort 2>/dev/null || true
-            git reset --hard HEAD 2>/dev/null || true
+            # Don't reset hard - it will lose previous successful merges
+            # git reset --hard HEAD 2>/dev/null || true
             git clean -fd 2>/dev/null || true
           }
 
@@ -236,7 +237,9 @@ jobs:
           if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
             echo ""
             echo "❌ Failed tasks:"
-            printf '   %s\n' "${FAILED_TASKS[@]}"
+            for task in "${FAILED_TASKS[@]}"; do
+              echo "   $task"
+            done
             
             # Create summary for GitHub
             {
@@ -247,7 +250,9 @@ jobs:
               echo ""
               if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
                 echo "### Failed Tasks:"
-                printf '- %s\n' "${FAILED_TASKS[@]}"
+                for task in "${FAILED_TASKS[@]}"; do
+                  echo "- $task"
+                done
               fi
             } >> $GITHUB_STEP_SUMMARY
           fi
