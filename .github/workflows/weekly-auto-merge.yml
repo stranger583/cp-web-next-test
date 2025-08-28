@@ -3,7 +3,7 @@ name: Create Weekly Beta Branch
 on:
   schedule:
     # Run at 8:00 AM UTC+8 (00:00 UTC) every Thursday
-    - cron: '0 0 * * 4'
+    - cron: "0 0 * * 4"
   workflow_dispatch: # Allow manual triggering if needed
 
 env:
@@ -20,7 +20,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: 'master'
+          ref: "master"
           fetch-depth: 0
 
       - name: Setup Git
@@ -170,12 +170,19 @@ jobs:
                     echo "🔄 Changes detected, performing squash merge..."
                     
                     # Use squash merge to keep history clean
+                    echo "🔧 Executing: git merge origin/$branch_name --squash --no-edit"
                     if git merge "origin/$branch_name" --squash --no-edit; then
+                      echo "🔍 Checking for staged changes..."
                       # Check if there are changes to commit
                       if ! git diff --cached --quiet; then
-                        git commit -m "feat: merge $branch_name"
-                        echo "✅ Successfully squash merged $branch_name"
-                        MERGED_COUNT=$((MERGED_COUNT + 1))
+                        if git commit -m "feat: merge $branch_name"; then
+                          echo "✅ Successfully squash merged $branch_name"
+                          MERGED_COUNT=$((MERGED_COUNT + 1))
+                        else
+                          echo "❌ Failed to commit squash merge for $branch_name"
+                          cleanup_git
+                          FAILED_TASKS+=("$task_name ($branch_name): Commit failed")
+                        fi
                       else
                         echo "ℹ️ No changes to commit (already up to date)"
                         MERGED_COUNT=$((MERGED_COUNT + 1))
