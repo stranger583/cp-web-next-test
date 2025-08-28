@@ -3,7 +3,7 @@ name: Create Weekly Beta Branch
 on:
   schedule:
     # Run at 8:00 AM UTC+8 (00:00 UTC) every Thursday
-    - cron: "0 0 * * 4"
+    - cron: '0 0 * * 4'
   workflow_dispatch: # Allow manual triggering if needed
 
 env:
@@ -20,7 +20,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: "master"
+          ref: 'master'
           fetch-depth: 0
 
       - name: Setup Git
@@ -31,27 +31,21 @@ jobs:
       - name: Create new branch
         id: create_branch
         run: |
-          # Use more precise date formatting to avoid cross-year week issues
-          YEAR=$(date +'%Y')
+          YEAR=$(date +'%y')
           WEEK=$(date +'%V')
-          BRANCH_NAME="beta/sprint-$YEAR-W$WEEK-auto"
+          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
           echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
           echo "📅 Branch name will be: $BRANCH_NAME"
 
           # Create and push the new branch
-          if git ls-remote --exit-code --heads origin $BRANCH_NAME >/dev/null 2>&1; then
+          if git ls-remote --exit-code --heads origin $BRANCH_NAME; then
             echo "⚠️ Branch $BRANCH_NAME already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
           else
             echo "✨ Branch $BRANCH_NAME does not exist. Creating it."
             git checkout -b $BRANCH_NAME
-            if git push origin $BRANCH_NAME; then
-              echo "✅ Successfully created and pushed branch $BRANCH_NAME"
-              echo "branch_exists=false" >> $GITHUB_OUTPUT
-            else
-              echo "::error::❌ Failed to push branch $BRANCH_NAME"
-              exit 1
-            fi
+            git push origin $BRANCH_NAME
+            echo "branch_exists=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Fetch ClickUp Beta Tasks
@@ -66,9 +60,8 @@ jobs:
           }
           trap cleanup EXIT
 
-          # Fetch tasks from ClickUp API with better error handling
+          # Fetch tasks from ClickUp API with error handling
           echo "📡 Fetching tasks from ClickUp API..."
-
           HTTP_CODE=$(curl -w "%{http_code}" -s --max-time 30 \
             -H "Authorization: $CLICKUP_API_TOKEN" \
             -H "Content-Type: application/json" \
@@ -93,24 +86,18 @@ jobs:
             exit 1
           fi
 
-          # Check for API errors in response
-          if jq -e '.err' /tmp/clickup_response.json >/dev/null 2>&1; then
-            ERROR_MSG=$(jq -r '.err // "Unknown API error"' /tmp/clickup_response.json)
-            echo "::error::❌ ClickUp API returned error: $ERROR_MSG"
-            exit 1
-          fi
-
           echo "✅ API Response received successfully"
 
           # Parse tasks and filter with explicit sorting
           TASK_BRANCH_PAIRS=$(jq -r '.tasks[] | 
-            select(
-              .status.status == "beta" and 
-              (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test" and
-              (.custom_fields[] | select(.name == "Branch") | .value) != null and
-              (.custom_fields[] | select(.name == "Branch") | .value) != ""
-            ) | "\(.name)\t\(.custom_fields[] | select(.name == "Branch") | .value)\t\(.id)"' \
-            /tmp/clickup_response.json | sort)
+          select(
+            .status.status == "beta" and 
+            (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test"
+          ) | 
+          (.custom_fields[] | select(.name == "Branch") | .value) as $branch |
+          select($branch != null and $branch != "") |
+          "\(.name)\t\($branch)\t\(.id)"' \
+          /tmp/clickup_response.json | sort)
 
           if [ -z "$TASK_BRANCH_PAIRS" ]; then
             echo "ℹ️ No beta tasks found for cp-web-next-test repository"
@@ -133,6 +120,11 @@ jobs:
         id: merge_beta_tasks
         if: steps.fetch_tasks.outputs.has_tasks == 'true'
         run: |
+          cleanup() {
+            rm -f /tmp/tasks_to_process.txt /tmp/clickup_response.json
+          }
+          trap cleanup EXIT
+
           BRANCH_NAME="${{ steps.create_branch.outputs.branch_name }}"
           TOTAL_TASKS="${{ steps.fetch_tasks.outputs.task_count }}"
           MERGED_COUNT=0
@@ -148,8 +140,7 @@ jobs:
           }
 
           # Checkout the target branch
-          git checkout $BRANCH_NAME
-          if [ $? -ne 0 ]; then
+          if ! git checkout $BRANCH_NAME; then
             echo "::error::❌ Failed to checkout branch $BRANCH_NAME"
             exit 1
           fi
@@ -168,48 +159,61 @@ jobs:
               
               # Check if branch exists remotely
               if git ls-remote --exit-code --heads origin "$branch_name" >/dev/null 2>&1; then
-                echo "   ✅ Branch exists remotely"
+                echo "✅ Branch exists remotely"
                 
                 # Fetch the latest version of the branch
                 if git fetch origin "$branch_name" 2>/dev/null; then
-                  echo "   📥 Fetched latest version"
+                  echo "📥 Fetched latest version"
                   
                   # Check if there are any changes to merge
                   if git merge-tree $(git merge-base HEAD "origin/$branch_name") HEAD "origin/$branch_name" | grep -q .; then
-                    echo "   🔄 Changes detected, performing squash merge..."
+                    echo "🔄 Changes detected, performing squash merge..."
                     
                     # Use squash merge to keep history clean
                     if git merge "origin/$branch_name" --squash --no-edit; then
                       # Check if there are changes to commit
                       if ! git diff --cached --quiet; then
-                        git commit -m "feat: merge $branch_name - $task_name - Task ID: $task_id - Auto-merged by: GitHub Actions"
-                        echo "   ✅ Successfully squash merged $branch_name"
+                        git commit -m "feat: merge $branch_name"
+                        echo "✅ Successfully squash merged $branch_name"
                         MERGED_COUNT=$((MERGED_COUNT + 1))
                       else
-                        echo "   ℹ️ No changes to commit (already up to date)"
+                        echo "ℹ️ No changes to commit (already up to date)"
                         MERGED_COUNT=$((MERGED_COUNT + 1))
                       fi
                     else
-                      echo "   ❌ Merge conflict detected for $branch_name"
+                      echo "❌ Merge conflict detected for $branch_name"
                       echo "::error::Merge conflict detected for task: $task_name (branch: $branch_name)"
                       cleanup_git
                       FAILED_TASKS+=("$task_name ($branch_name): Merge conflict")
                     fi
                   else
-                    echo "   ℹ️ No changes to merge (already up to date)"
+                    echo "ℹ️ No changes to merge (already up to date)"
                     MERGED_COUNT=$((MERGED_COUNT + 1))
                   fi
                 else
-                  echo "   ❌ Failed to fetch branch $branch_name"
+                  echo "❌ Failed to fetch branch $branch_name"
                   FAILED_TASKS+=("$task_name ($branch_name): Failed to fetch")
                 fi
               else
-                echo "   ❌ Branch $branch_name not found remotely"
+                echo "❌ Branch $branch_name not found remotely"
                 echo "::warning::Branch not found for task: $task_name"
                 FAILED_TASKS+=("$task_name ($branch_name): Branch not found")
               fi
             fi
           done < /tmp/tasks_to_process.txt
+
+          {
+            echo "### Merge Beta Tasks Summary"
+            echo "- Total tasks: $TOTAL_TASKS"
+            echo "- Successfully merged: $MERGED_COUNT"
+            echo "- Failed tasks: ${#FAILED_TASKS[@]}"
+            if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
+              echo "- List of failed tasks:"
+              for task in "${FAILED_TASKS[@]}"; do
+                echo "  - $task"
+              done
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # Clean up temporary file
           rm -f /tmp/tasks_to_process.txt
