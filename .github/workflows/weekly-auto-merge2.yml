@@ -6,7 +6,7 @@ on:
     - cron: "0 0 * * 4"
   workflow_dispatch: # Allow manual triggering if needed
   push: # 觸發測試
-    branches: [feat/add-workflow-in-feature-test]
+    branches: [feat/add-workflow-in-feature-branch]
 
 env:
   CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
