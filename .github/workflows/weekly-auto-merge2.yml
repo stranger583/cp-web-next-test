@@ -5,8 +5,12 @@ on:
     # Run at 8:00 AM UTC+8 (00:00 UTC) every Thursday
     - cron: "0 0 * * 4"
   workflow_dispatch: # Allow manual triggering if needed
-  # push: # 觸發測試
-  #   branches: [feat/add-workflow-in-feature-branch]
+    inputs:
+      branch:
+        description: "Branch to run workflow on"
+        required: true
+        default: "feat/add-workflow-in-feature-test"
+        type: string
 
 env:
   CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
