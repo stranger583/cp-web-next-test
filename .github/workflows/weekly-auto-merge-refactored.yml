@@ -266,8 +266,14 @@ jobs:
           # Process beta tasks
           BETA_RESULT=$(process_tasks "$BETA_TASK_DATA" "beta" "$BETA_BRANCH")
 
+          # Debug: Show the raw result
+          echo "🔍 Debug: BETA_RESULT = '$BETA_RESULT'"
+
           # Parse results
           IFS=':' read -r merged_count total_tasks failed_count <<< "$BETA_RESULT"
+
+          # Debug: Show parsed values
+          echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
 
           # Set outputs
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
@@ -350,8 +356,14 @@ jobs:
           # Process delta tasks
           DELTA_RESULT=$(process_tasks "$DELTA_TASK_DATA" "delta" "$DELTA_BRANCH_NAME")
 
+          # Debug: Show the raw result
+          echo "🔍 Debug: DELTA_RESULT = '$DELTA_RESULT'"
+
           # Parse results
           IFS=':' read -r merged_count total_tasks failed_count <<< "$DELTA_RESULT"
+
+          # Debug: Show parsed values
+          echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
 
           # Set outputs
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
