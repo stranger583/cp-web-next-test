@@ -4,14 +4,18 @@ on:
   schedule:
     # Run at 8:00 AM UTC+8 (00:00 UTC) every Thursday
     - cron: "0 0 * * 4"
-  workflow_dispatch: # Allow manual triggering if needed
+  workflow_dispatch:
 
 env:
   CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
   CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
+  REPOSITORY_NAME: "cp-web-next-test"
+  BRANCH_PREFIX_BETA: "beta/sprint"
+  BRANCH_PREFIX_DELTA: "delta/sprint"
+  MAX_RETRY_ATTEMPTS: 3
 
 jobs:
-  create_branch:
+  create_and_merge_branches:
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -23,682 +27,578 @@ jobs:
           ref: "master"
           fetch-depth: 0
 
-      - name: Setup Git
+      - name: Setup Git and Environment
         run: |
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
 
-      - name: Create new branch
-        id: create_branch
-        run: |
+          # Set up common variables
           YEAR=$(date +'%y')
           WEEK=$(date +'%V')
-          BRANCH_NAME="beta/sprint-$YEAR$WEEK-auto"
-          echo "branch_name=$BRANCH_NAME" >> $GITHUB_OUTPUT
-          echo "year=$YEAR" >> $GITHUB_OUTPUT
-          echo "week=$WEEK" >> $GITHUB_OUTPUT
-          echo "📅 Branch name will be: $BRANCH_NAME"
+          BETA_BRANCH="$BRANCH_PREFIX_BETA-${YEAR}${WEEK}-auto"
+          DELTA_BRANCH="$BRANCH_PREFIX_DELTA-${YEAR}${WEEK}-auto"
 
-          # Create and push the new branch
-          if git ls-remote --exit-code --heads origin $BRANCH_NAME; then
-            echo "⚠️ Branch $BRANCH_NAME already exists"
+          echo "YEAR=$YEAR" >> $GITHUB_ENV
+          echo "WEEK=$WEEK" >> $GITHUB_ENV
+          echo "BETA_BRANCH=$BETA_BRANCH" >> $GITHUB_ENV
+          echo "DELTA_BRANCH=$DELTA_BRANCH" >> $GITHUB_ENV
+
+          echo "📅 Beta branch: $BETA_BRANCH"
+          echo "📅 Delta branch: $DELTA_BRANCH"
+
+          # Common functions
+          cat << 'FUNCTIONS' > /tmp/common_functions.sh
+
+          # Fetch tasks from ClickUp API
+          fetch_clickup_tasks() {
+            local status="$1"
+            local output_file="$2"
+            
+            echo "📡 Fetching $status tasks from ClickUp API..." >&2
+            
+            local http_code
+            http_code=$(curl -w "%{http_code}" -s --max-time 30 \
+              -H "Authorization: $CLICKUP_API_TOKEN" \
+              -H "Content-Type: application/json" \
+              -o "$output_file" \
+              "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=$status")
+            
+            if [ "$http_code" != "200" ]; then
+              echo "::error::❌ ClickUp API request failed with HTTP status: $http_code" >&2
+              [ -f "$output_file" ] && cat "$output_file" >&2
+              return 1
+            fi
+            
+            if ! jq empty "$output_file" 2>/dev/null; then
+              echo "::error::❌ Invalid JSON response from ClickUp API" >&2
+              cat "$output_file" >&2
+              return 1
+            fi
+            
+            echo "✅ Successfully fetched $status tasks" >&2
+            return 0
+          }
+
+          # Parse tasks and return task-branch pairs
+          parse_tasks() {
+            local input_file="$1"
+            local status="$2"
+            
+            jq -r ".tasks[] | 
+            select(
+              .status.status == \"$status\" and 
+              (.custom_fields[] | select(.name == \"Repository\") | .value) == \"$REPOSITORY_NAME\"
+            ) | 
+            (.custom_fields[] | select(.name == \"Branch\") | .value) as \$branch |
+            select(\$branch != null and \$branch != \"\") |
+            \"\(.name)\t\(\$branch)\t\(.id)\"" "$input_file" | sort
+          }
+
+          # Clean up git state
+          cleanup_git() {
+            git merge --abort 2>/dev/null || true
+            git clean -fd 2>/dev/null || true
+          }
+
+          # Merge a single task branch
+          merge_task_branch() {
+            local task_name="$1"
+            local branch_name="$2"
+            local task_type="$3"
+            
+            echo "📦 Processing $task_type task: $task_name" >&2
+            echo "   Branch: $branch_name" >&2
+            
+            # Check if branch exists remotely
+            if ! git ls-remote --exit-code --heads origin "$branch_name" >/dev/null 2>&1; then
+              echo "❌ Branch $branch_name not found remotely" >&2
+              echo "::warning::Branch not found for $task_type task: $task_name" >&2
+              return 1
+            fi
+            
+            echo "✅ Branch exists remotely" >&2
+            
+            # Fetch the latest version
+            if ! git fetch origin "$branch_name" >/dev/null 2>&1; then
+              echo "❌ Failed to fetch branch $branch_name" >&2
+              return 1
+            fi
+            
+            echo "📥 Fetched latest version" >&2
+            
+            # Check if there are changes to merge
+            if ! git merge-tree $(git merge-base HEAD "origin/$branch_name") HEAD "origin/$branch_name" | grep -q .; then
+              echo "ℹ️ No changes to merge (already up to date)" >&2
+              return 0
+            fi
+            
+            echo "🔄 Changes detected, performing squash merge..." >&2
+            
+            # Perform squash merge (redirect all output to stderr)
+            if ! git merge "origin/$branch_name" --squash --no-edit >/dev/null 2>&1; then
+              echo "❌ Merge conflict detected for $task_type $branch_name" >&2
+              echo "::error::Merge conflict detected for $task_type task: $task_name (branch: $branch_name)" >&2
+              cleanup_git
+              return 1
+            fi
+            
+            # Check if there are changes to commit
+            if ! git diff --cached --quiet; then
+              if git commit -m "feat: merge $task_type $branch_name" >/dev/null 2>&1; then
+                echo "✅ Successfully squash merged $task_type $branch_name" >&2
+                return 0
+              else
+                echo "❌ Failed to commit squash merge for $task_type $branch_name" >&2
+                cleanup_git
+                return 1
+              fi
+            else
+              echo "ℹ️ No changes to commit (already up to date)" >&2
+              return 0
+            fi
+          }
+
+          # Process multiple tasks
+          process_tasks() {
+            local task_data="$1"
+            local task_type="$2"
+            local target_branch="$3"
+            
+            if [ -z "$task_data" ]; then
+              echo "ℹ️ No $task_type tasks found for $REPOSITORY_NAME repository" >&2
+              echo "0:0:0:"
+              return 0
+            fi
+            
+            local total_tasks merged_count=0
+            total_tasks=$(echo "$task_data" | wc -l)
+            local failed_tasks=()
+            
+            echo "🎯 Found $total_tasks $task_type tasks for $REPOSITORY_NAME:" >&2
+            while IFS=$'\t' read -r task_name branch_name task_id; do
+              echo "  📋 $task_name (Branch: $branch_name)" >&2
+            done <<< "$task_data"
+            
+            echo "🚀 Starting $task_type merge process for $total_tasks tasks..." >&2
+            
+            # Ensure we're on the correct branch
+            if ! git checkout "$target_branch" >/dev/null 2>&1; then
+              echo "::error::❌ Failed to checkout $task_type branch $target_branch" >&2
+              return 1
+            fi
+            
+            # Process each task using here-string to avoid subshell issues
+            while IFS=$'\t' read -r task_name branch_name task_id; do
+              if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
+                if merge_task_branch "$task_name" "$branch_name" "$task_type"; then
+                  merged_count=$((merged_count + 1))
+                else
+                  failed_tasks+=("$task_name ($branch_name)")
+                fi
+              fi
+            done <<< "$task_data"
+            
+            # Generate summary
+            echo "📊 $task_type Merge Summary:" >&2
+            echo "   Total tasks: $total_tasks" >&2
+            echo "   Successfully merged: $merged_count" >&2
+            echo "   Failed: ${#failed_tasks[@]}" >&2
+            
+            # Report failed tasks
+            if [ ${#failed_tasks[@]} -gt 0 ]; then
+              echo "❌ Failed $task_type tasks:" >&2
+              for task in "${failed_tasks[@]}"; do
+                echo "   $task" >&2
+              done
+            fi
+            
+            # Push changes if successful merges
+            if [ $merged_count -gt 0 ]; then
+              echo "📤 Pushing $merged_count successful $task_type merges..." >&2
+              if git push origin "$target_branch" >/dev/null 2>&1; then
+                echo "✅ Successfully pushed all $task_type changes" >&2
+              else
+                echo "::error::❌ Failed to push $task_type changes" >&2
+                return 1
+              fi
+            else
+              echo "⚠️ No $task_type changes to push" >&2
+            fi
+            
+            # Return results - now includes failed task names
+            local failed_tasks_str=""
+            if [ ${#failed_tasks[@]} -gt 0 ]; then
+              failed_tasks_str=$(printf "%s|" "${failed_tasks[@]}" | sed 's/|$//')
+            fi
+            echo "$merged_count:$total_tasks:${#failed_tasks[@]}:$failed_tasks_str"
+          }
+          FUNCTIONS
+
+          source /tmp/common_functions.sh
+
+      - name: Create Beta Branch
+        id: create_beta
+        run: |
+          echo "📅 Creating beta branch: $BETA_BRANCH"
+
+          if git ls-remote --exit-code --heads origin $BETA_BRANCH >/dev/null 2>&1; then
+            echo "⚠️ Beta branch $BETA_BRANCH already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
           else
-            echo "✨ Branch $BRANCH_NAME does not exist. Creating it."
-            git checkout -b $BRANCH_NAME
-            git push origin $BRANCH_NAME
+            echo "✨ Creating new beta branch: $BETA_BRANCH"
+            git checkout -b $BETA_BRANCH
+            git push origin $BETA_BRANCH
             echo "branch_exists=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Fetch ClickUp Beta Tasks
-        id: fetch_tasks
+          echo "branch_name=$BETA_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: Process Beta Tasks
+        id: process_beta
         run: |
-          BRANCH_NAME="${{ steps.create_branch.outputs.branch_name }}"
-          echo "🔍 Operating on branch: $BRANCH_NAME"
+          source /tmp/common_functions.sh
 
-          # Create cleanup function
-          cleanup() {
-            rm -f /tmp/clickup_response.json
-          }
-          trap cleanup EXIT
+          echo "🚀 Starting beta task processing..."
 
-          # Fetch tasks from ClickUp API with error handling
-          echo "📡 Fetching tasks from ClickUp API..."
-          HTTP_CODE=$(curl -w "%{http_code}" -s --max-time 30 \
-            -H "Authorization: $CLICKUP_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -o /tmp/clickup_response.json \
-            "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=beta")
+          # Get BETA_BRANCH from environment
+          BETA_BRANCH="${{ env.BETA_BRANCH }}"
+          echo "🔍 Debug: BETA_BRANCH = '$BETA_BRANCH'"
 
-          # Check HTTP status code
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::❌ ClickUp API request failed with HTTP status: $HTTP_CODE"
-            if [ -f /tmp/clickup_response.json ]; then
-              echo "Response content:"
-              cat /tmp/clickup_response.json
-            fi
+          # Fetch beta tasks
+          if ! fetch_clickup_tasks "beta" "/tmp/clickup_beta_response.json"; then
+            echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          # Check if response is valid JSON and has no errors
-          if ! jq empty /tmp/clickup_response.json 2>/dev/null; then
-            echo "::error::❌ Invalid JSON response from ClickUp API"
-            echo "Response content:"
-            cat /tmp/clickup_response.json
-            exit 1
-          fi
+          # Parse beta tasks
+          BETA_TASK_DATA=$(parse_tasks "/tmp/clickup_beta_response.json" "beta")
+          echo "🔍 Debug: BETA_TASK_DATA = '$BETA_TASK_DATA'"
 
-          echo "✅ API Response received successfully"
-
-          # Parse tasks and filter with explicit sorting
-          TASK_BRANCH_PAIRS=$(jq -r '.tasks[] | 
-          select(
-            .status.status == "beta" and 
-            (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test"
-          ) | 
-          (.custom_fields[] | select(.name == "Branch") | .value) as $branch |
-          select($branch != null and $branch != "") |
-          "\(.name)\t\($branch)\t\(.id)"' \
-          /tmp/clickup_response.json | sort)
-
-          if [ -z "$TASK_BRANCH_PAIRS" ]; then
-            echo "ℹ️ No beta tasks found for cp-web-next-test repository"
+          # Check if we have tasks
+          if [ -z "$BETA_TASK_DATA" ]; then
+            echo "⚠️ No beta tasks found, setting default values"
+            echo "merged_count=0" >> $GITHUB_OUTPUT
+            echo "total_tasks=0" >> $GITHUB_OUTPUT
+            echo "failed_count=0" >> $GITHUB_OUTPUT
+            echo "all_tasks_merged=false" >> $GITHUB_OUTPUT
+            echo "process_success=true" >> $GITHUB_OUTPUT
             echo "has_tasks=false" >> $GITHUB_OUTPUT
-          else
-            TASK_COUNT=$(echo "$TASK_BRANCH_PAIRS" | wc -l)
-            echo "🎯 Found $TASK_COUNT beta tasks for cp-web-next-test:"
-            echo "$TASK_BRANCH_PAIRS" | while IFS=$'\t' read -r task_name branch_name task_id; do
-              echo "  📋 $task_name (Branch: $branch_name)"
-            done
-            echo "has_tasks=true" >> $GITHUB_OUTPUT
-            echo "task_count=$TASK_COUNT" >> $GITHUB_OUTPUT
-            # Store the paired data in outputs for next step
-            echo "task_branch_pairs<<EOF" >> $GITHUB_OUTPUT
-            echo "$TASK_BRANCH_PAIRS" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
+            
+            {
+              echo "### Beta Tasks Processing Summary"
+              echo "- **Total beta tasks:** 0"
+              echo "- **Successfully merged:** 0"
+              echo "- **Failed:** 0"
+              echo "- **Status:** ⚠️ No tasks to process"
+            } >> "$GITHUB_STEP_SUMMARY"
+            
+            rm -f /tmp/clickup_beta_response.json
+            exit 0
           fi
 
-      - name: Merge Beta Tasks
-        id: merge_beta_tasks
-        if: steps.fetch_tasks.outputs.has_tasks == 'true'
-        run: |
-          cleanup() {
-            rm -f /tmp/tasks_to_process.txt /tmp/clickup_response.json
-          }
-          trap cleanup EXIT
+          # Process beta tasks - CRITICAL FIX: Capture only the final result line
+          echo "🔍 Debug: Calling process_tasks with: '$BETA_TASK_DATA'"
+          BETA_RESULT=$(process_tasks "$BETA_TASK_DATA" "beta" "$BETA_BRANCH" | tail -1)
+          echo "🔍 Debug: BETA_RESULT = '$BETA_RESULT'"
 
-          BRANCH_NAME="${{ steps.create_branch.outputs.branch_name }}"
-          TOTAL_TASKS="${{ steps.fetch_tasks.outputs.task_count }}"
-          MERGED_COUNT=0
-          FAILED_TASKS=()
+          # Parse results
+          IFS=':' read -r merged_count total_tasks failed_count failed_tasks_str <<< "$BETA_RESULT"
+          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count', failed_tasks_str='$failed_tasks_str'"
 
-          echo "🚀 Starting merge process for $TOTAL_TASKS tasks..."
-
-          # Enhanced cleanup function for git operations
-          cleanup_git() {
-            git merge --abort 2>/dev/null || true
-            # Don't reset hard - it will lose previous successful merges
-            # git reset --hard HEAD 2>/dev/null || true
-            git clean -fd 2>/dev/null || true
-          }
-
-          # Checkout the target branch
-          if ! git checkout $BRANCH_NAME; then
-            echo "::error::❌ Failed to checkout branch $BRANCH_NAME"
+          # Validate parsed values
+          if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
+            echo "❌ Error: Failed to parse BETA_RESULT properly"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          # Get task-branch pairs from previous step output
-          TASK_BRANCH_PAIRS="${{ steps.fetch_tasks.outputs.task_branch_pairs }}"
+          # Additional validation: ensure values are numeric
+          if ! [[ "$merged_count" =~ ^[0-9]+$ ]] || ! [[ "$total_tasks" =~ ^[0-9]+$ ]] || ! [[ "$failed_count" =~ ^[0-9]+$ ]]; then
+            echo "❌ Error: Parsed values are not numeric"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
-          # Process each task-branch pair using temporary file to avoid subshell variable scope issues
-          echo "$TASK_BRANCH_PAIRS" > /tmp/tasks_to_process.txt
+          # Set outputs
+          echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
+          echo "total_tasks=$total_tasks" >> $GITHUB_OUTPUT
+          echo "failed_count=$failed_count" >> $GITHUB_OUTPUT
+          echo "failed_tasks_str=$failed_tasks_str" >> $GITHUB_OUTPUT
+          echo "all_tasks_merged=$([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "process_success=$([[ $failed_count -eq 0 || $merged_count -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "has_tasks=$([[ $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
 
-          while IFS=$'\t' read -r task_name branch_name task_id; do
-            if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
-              echo ""
-              echo "📦 Processing ($((MERGED_COUNT + 1))/$TOTAL_TASKS): $task_name"
-              echo "   Branch: $branch_name"
-              
-              # Check if branch exists remotely
-              if git ls-remote --exit-code --heads origin "$branch_name" >/dev/null 2>&1; then
-                echo "✅ Branch exists remotely"
-                
-                # Fetch the latest version of the branch
-                if git fetch origin "$branch_name" 2>/dev/null; then
-                  echo "📥 Fetched latest version"
-                  
-                  # Check if there are any changes to merge
-                  if git merge-tree $(git merge-base HEAD "origin/$branch_name") HEAD "origin/$branch_name" | grep -q .; then
-                    echo "🔄 Changes detected, performing squash merge..."
-                    
-                    # Use squash merge to keep history clean
-                    echo "🔧 Executing: git merge origin/$branch_name --squash --no-edit"
-                    if git merge "origin/$branch_name" --squash --no-edit; then
-                      echo "🔍 Checking for staged changes..."
-                      # Check if there are changes to commit
-                      if ! git diff --cached --quiet; then
-                        if git commit -m "feat: merge $branch_name"; then
-                          echo "✅ Successfully squash merged $branch_name"
-                          MERGED_COUNT=$((MERGED_COUNT + 1))
-                        else
-                          echo "❌ Failed to commit squash merge for $branch_name"
-                          cleanup_git
-                          FAILED_TASKS+=("$task_name ($branch_name): Commit failed")
-                        fi
-                      else
-                        echo "ℹ️ No changes to commit (already up to date)"
-                        MERGED_COUNT=$((MERGED_COUNT + 1))
-                      fi
-                    else
-                      echo "❌ Merge conflict detected for $branch_name"
-                      echo "::error::Merge conflict detected for task: $task_name (branch: $branch_name)"
-                      cleanup_git
-                      FAILED_TASKS+=("$task_name ($branch_name): Merge conflict")
-                    fi
-                  else
-                    echo "ℹ️ No changes to merge (already up to date)"
-                    MERGED_COUNT=$((MERGED_COUNT + 1))
-                  fi
-                else
-                  echo "❌ Failed to fetch branch $branch_name"
-                  FAILED_TASKS+=("$task_name ($branch_name): Failed to fetch")
-                fi
-              else
-                echo "❌ Branch $branch_name not found remotely"
-                echo "::warning::Branch not found for task: $task_name"
-                FAILED_TASKS+=("$task_name ($branch_name): Branch not found")
-              fi
-            fi
-          done < /tmp/tasks_to_process.txt
-
+          # Add to step summary
           {
-            echo "### Merge Beta Tasks Summary"
-            echo "- Total tasks: $TOTAL_TASKS"
-            echo "- Successfully merged: $MERGED_COUNT"
-            echo "- Failed tasks: ${#FAILED_TASKS[@]}"
-            if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
-              echo "- List of failed tasks:"
-              for task in "${FAILED_TASKS[@]}"; do
+            echo "### Beta Tasks Processing Summary"
+            echo "- **Total beta tasks:** $total_tasks"
+            echo "- **Successfully merged:** $merged_count"
+            echo "- **Failed:** $failed_count"
+            echo "- **Status:** $([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "✅ All tasks merged" || echo "⚠️ Partial success or no tasks")"
+            
+            # Add failed tasks details if any
+            if [ -n "$failed_tasks_str" ] && [ "$failed_count" -gt 0 ]; then
+              echo ""
+              echo "**❌ Failed Tasks:**"
+              IFS='|' read -ra failed_tasks <<< "$failed_tasks_str"
+              for task in "${failed_tasks[@]}"; do
                 echo "  - $task"
               done
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Clean up temporary file
-          rm -f /tmp/tasks_to_process.txt
-
-          # Generate merge summary
-          echo ""
-          echo "📊 Merge Summary:"
-          echo "   Total tasks: $TOTAL_TASKS"
-          echo "   Successfully merged: $MERGED_COUNT"
-          echo "   Failed: ${#FAILED_TASKS[@]}"
-
-          # Report failed tasks if any
-          if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
-            echo ""
-            echo "❌ Failed tasks:"
-            for task in "${FAILED_TASKS[@]}"; do
-              echo "   $task"
-            done
-            
-            # Create summary for GitHub
-            {
-              echo "## Merge Summary"
-              echo ""
-              echo "- ✅ Successfully merged: $MERGED_COUNT/$TOTAL_TASKS tasks"
-              echo "- ❌ Failed: ${#FAILED_TASKS[@]} tasks"
-              echo ""
-              if [ ${#FAILED_TASKS[@]} -gt 0 ]; then
-                echo "### Failed Tasks:"
-                for task in "${FAILED_TASKS[@]}"; do
-                  echo "- $task"
-                done
-              fi
-            } >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Push changes if any merges were successful
-          if [ $MERGED_COUNT -gt 0 ]; then
-            echo ""
-            echo "📤 Pushing $MERGED_COUNT successful merges..."
-            if git push origin $BRANCH_NAME; then
-              echo "✅ Successfully pushed all changes"
-              echo "merge_success=true" >> $GITHUB_OUTPUT
-              echo "merged_count=$MERGED_COUNT" >> $GITHUB_OUTPUT
-            else
-              echo "::error::❌ Failed to push changes"
-              exit 1
-            fi
-          else
-            echo "⚠️ No changes to push"
-            echo "merge_success=false" >> $GITHUB_OUTPUT
-            echo "merged_count=0" >> $GITHUB_OUTPUT
-          fi
-
-          # Check if all tasks were successfully merged (perfect scenario)
-          if [ $MERGED_COUNT -eq $TOTAL_TASKS ]; then
-            echo "all_tasks_merged=true" >> $GITHUB_OUTPUT
-            echo "🎉 All beta tasks successfully merged!"
-          else
-            echo "all_tasks_merged=false" >> $GITHUB_OUTPUT
-          fi
-
-          # Exit with error if some tasks failed but allow partial success
-          if [ ${#FAILED_TASKS[@]} -gt 0 ] && [ $MERGED_COUNT -eq 0 ]; then
-            echo "::error::❌ All merge operations failed"
-            echo "merge_success=false" >> $GITHUB_OUTPUT
-            echo "merged_count=0" >> $GITHUB_OUTPUT
-            exit 1
-          elif [ ${#FAILED_TASKS[@]} -gt 0 ]; then
-            echo "::warning::⚠️ Some tasks failed but $MERGED_COUNT tasks were successfully merged"
-            echo "merge_success=true" >> $GITHUB_OUTPUT
-            echo "merged_count=$MERGED_COUNT" >> $GITHUB_OUTPUT
-          else
-            echo "merge_success=true" >> $GITHUB_OUTPUT
-            echo "merged_count=$MERGED_COUNT" >> $GITHUB_OUTPUT
-          fi
+          # Clean up
+          rm -f /tmp/clickup_beta_response.json
 
       - name: Create Delta Branch
-        id: create_delta_branch
-        if: steps.merge_beta_tasks.outputs.all_tasks_merged == 'true'
+        id: create_delta
+        if: steps.process_beta.outputs.all_tasks_merged == 'true'
         run: |
-          YEAR="${{ steps.create_branch.outputs.year }}"
-          WEEK="${{ steps.create_branch.outputs.week }}"
-          BETA_BRANCH_NAME="${{ steps.create_branch.outputs.branch_name }}"
-          DELTA_BRANCH_NAME="delta/sprint-$YEAR$WEEK-auto"
+          echo "🎉 All beta tasks successfully merged! Creating delta branch..."
+          echo "   Source branch: $BETA_BRANCH"
+          echo "   Delta branch: $DELTA_BRANCH"
 
-          echo "🎯 All beta tasks successfully merged! Creating delta branch..."
-          echo "   Source branch: $BETA_BRANCH_NAME"
-          echo "   Delta branch: $DELTA_BRANCH_NAME"
-
-          # Check if delta branch already exists
-          if git ls-remote --exit-code --heads origin $DELTA_BRANCH_NAME; then
-            echo "⚠️ Delta branch $DELTA_BRANCH_NAME already exists"
-            echo "delta_branch_exists=true" >> $GITHUB_OUTPUT
-            echo "delta_branch_created=false" >> $GITHUB_OUTPUT
+          if git ls-remote --exit-code --heads origin $DELTA_BRANCH >/dev/null 2>&1; then
+            echo "⚠️ Delta branch $DELTA_BRANCH already exists"
+            echo "branch_exists=true" >> $GITHUB_OUTPUT
+            echo "branch_created=false" >> $GITHUB_OUTPUT
           else
-            echo "✨ Creating new delta branch: $DELTA_BRANCH_NAME"
+            echo "✨ Creating new delta branch: $DELTA_BRANCH"
             
             # Ensure we're on the beta branch with latest changes
-            git checkout $BETA_BRANCH_NAME
-            git pull origin $BETA_BRANCH_NAME
+            git checkout $BETA_BRANCH
+            git pull origin $BETA_BRANCH
             
-            # Create delta branch from beta branch
-            if git checkout -b $DELTA_BRANCH_NAME; then
-              echo "📦 Delta branch created locally"
+            # Create and push delta branch
+            if git checkout -b $DELTA_BRANCH && git push origin $DELTA_BRANCH; then
+              echo "🚀 Successfully created and pushed delta branch"
+              echo "branch_exists=false" >> $GITHUB_OUTPUT
+              echo "branch_created=true" >> $GITHUB_OUTPUT
               
-              # Push delta branch to remote
-              if git push origin $DELTA_BRANCH_NAME; then
-                echo "🚀 Successfully pushed delta branch to remote"
-                echo "delta_branch_exists=false" >> $GITHUB_OUTPUT
-                echo "delta_branch_created=true" >> $GITHUB_OUTPUT
-                echo "delta_branch_name=$DELTA_BRANCH_NAME" >> $GITHUB_OUTPUT
-                
-                # Add to step summary
-                {
-                  echo "### 🎉 Delta Branch Created"
-                  echo "- **Branch Name:** \`$DELTA_BRANCH_NAME\`"
-                  echo "- **Source:** \`$BETA_BRANCH_NAME\`"
-                  echo "- **Reason:** All beta tasks successfully merged"
-                  echo "- **Status:** ✅ Ready for deployment"
-                } >> $GITHUB_STEP_SUMMARY
-              else
-                echo "::error::❌ Failed to push delta branch to remote"
-                echo "delta_branch_created=false" >> $GITHUB_OUTPUT
-                exit 1
-              fi
+              {
+                echo "### 🎉 Delta Branch Created"
+                echo "- **Branch Name:** \`$DELTA_BRANCH\`"
+                echo "- **Source:** \`$BETA_BRANCH\`"
+                echo "- **Status:** ✅ Ready for deployment"
+              } >> $GITHUB_STEP_SUMMARY
             else
               echo "::error::❌ Failed to create delta branch"
-              echo "delta_branch_created=false" >> $GITHUB_OUTPUT
+              echo "branch_created=false" >> $GITHUB_OUTPUT
               exit 1
             fi
           fi
 
-      - name: Fetch ClickUp Delta Tasks
-        id: fetch_delta_tasks
-        if: steps.create_delta_branch.outputs.delta_branch_created == 'true' || steps.create_delta_branch.outputs.delta_branch_exists == 'true'
-        run: |
-          DELTA_BRANCH_NAME="${{ steps.create_delta_branch.outputs.delta_branch_name }}"
-          echo "🔍 Operating on delta branch: $DELTA_BRANCH_NAME"
+          echo "branch_name=$DELTA_BRANCH" >> $GITHUB_OUTPUT
 
-          # Create cleanup function
-          cleanup() {
+      - name: Process Delta Tasks
+        id: process_delta
+        if: steps.create_delta.outputs.branch_created == 'true' || steps.create_delta.outputs.branch_exists == 'true'
+        run: |
+          source /tmp/common_functions.sh
+
+          echo "🚀 Starting delta task processing..."
+
+          # Get DELTA_BRANCH from environment
+          DELTA_BRANCH="${{ env.DELTA_BRANCH }}"
+          echo "🔍 Debug: DELTA_BRANCH = '$DELTA_BRANCH'"
+
+          # Use existing delta branch or the one we just created
+          DELTA_BRANCH_NAME="${{ steps.create_delta.outputs.branch_name }}"
+          echo "🔍 Debug: DELTA_BRANCH_NAME = '$DELTA_BRANCH_NAME'"
+
+          # Fetch delta tasks
+          if ! fetch_clickup_tasks "delta" "/tmp/clickup_delta_response.json"; then
+            echo "process_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Parse delta tasks
+          DELTA_TASK_DATA=$(parse_tasks "/tmp/clickup_delta_response.json" "delta")
+          echo "🔍 Debug: DELTA_TASK_DATA = '$DELTA_TASK_DATA'"
+
+          # Check if we have tasks
+          if [ -z "$DELTA_TASK_DATA" ]; then
+            echo "⚠️ No delta tasks found, setting default values"
+            echo "merged_count=0" >> $GITHUB_OUTPUT
+            echo "total_tasks=0" >> $GITHUB_OUTPUT
+            echo "failed_count=0" >> $GITHUB_OUTPUT
+            echo "all_tasks_merged=false" >> $GITHUB_OUTPUT
+            echo "process_success=true" >> $GITHUB_OUTPUT
+            echo "has_tasks=false" >> $GITHUB_OUTPUT
+            
+            {
+              echo "### Delta Tasks Processing Summary"
+              echo "- **Total delta tasks:** 0"
+              echo "- **Successfully merged:** 0"
+              echo "- **Failed:** 0"
+              echo "- **Status:** ⚠️ No tasks to process"
+            } >> "$GITHUB_STEP_SUMMARY"
+            
             rm -f /tmp/clickup_delta_response.json
-          }
-          trap cleanup EXIT
+            exit 0
+          fi
 
-          # Fetch delta tasks from ClickUp API with error handling
-          echo "📡 Fetching delta tasks from ClickUp API..."
-          HTTP_CODE=$(curl -w "%{http_code}" -s --max-time 30 \
-            -H "Authorization: $CLICKUP_API_TOKEN" \
-            -H "Content-Type: application/json" \
-            -o /tmp/clickup_delta_response.json \
-            "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=delta")
+          # Process delta tasks - CRITICAL FIX: Capture only the final result line
+          echo "🔍 Debug: Calling process_tasks with: '$DELTA_TASK_DATA'"
+          DELTA_RESULT=$(process_tasks "$DELTA_TASK_DATA" "delta" "$DELTA_BRANCH_NAME" | tail -1)
+          echo "🔍 Debug: DELTA_RESULT = '$DELTA_RESULT'"
 
-          # Check HTTP status code
-          if [ "$HTTP_CODE" != "200" ]; then
-            echo "::error::❌ ClickUp API request failed with HTTP status: $HTTP_CODE"
-            if [ -f /tmp/clickup_delta_response.json ]; then
-              echo "Response content:"
-              cat /tmp/clickup_delta_response.json
-            fi
+          # Parse results
+          IFS=':' read -r merged_count total_tasks failed_count failed_tasks_str <<< "$DELTA_RESULT"
+          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count', failed_tasks_str='$failed_tasks_str'"
+
+          # Validate parsed values
+          if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
+            echo "❌ Error: Failed to parse DELTA_RESULT properly"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          # Check if response is valid JSON and has no errors
-          if ! jq empty /tmp/clickup_delta_response.json 2>/dev/null; then
-            echo "::error::❌ Invalid JSON response from ClickUp API"
-            echo "Response content:"
-            cat /tmp/clickup_delta_response.json
+          # Additional validation: ensure values are numeric
+          if ! [[ "$merged_count" =~ ^[0-9]+$ ]] || ! [[ "$total_tasks" =~ ^[0-9]+$ ]] || ! [[ "$failed_count" =~ ^[0-9]+$ ]]; then
+            echo "❌ Error: Parsed values are not numeric"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
 
-          echo "✅ API Response received successfully"
+          # Set outputs
+          echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
+          echo "total_tasks=$total_tasks" >> $GITHUB_OUTPUT
+          echo "failed_count=$failed_count" >> $GITHUB_OUTPUT
+          echo "failed_tasks_str=$failed_tasks_str" >> $GITHUB_OUTPUT
+          echo "all_tasks_merged=$([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "process_success=$([[ $failed_count -eq 0 || $merged_count -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
+          echo "has_tasks=$([[ $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
 
-          # Parse delta tasks and filter with explicit sorting
-          DELTA_TASK_BRANCH_PAIRS=$(jq -r '.tasks[] | 
-          select(
-            .status.status == "delta" and 
-            (.custom_fields[] | select(.name == "Repository") | .value) == "cp-web-next-test"
-          ) | 
-          (.custom_fields[] | select(.name == "Branch") | .value) as $branch |
-          select($branch != null and $branch != "") |
-          "\(.name)\t\($branch)\t\(.id)"' \
-          /tmp/clickup_delta_response.json | sort)
-
-          if [ -z "$DELTA_TASK_BRANCH_PAIRS" ]; then
-            echo "ℹ️ No delta tasks found for cp-web-next-test repository"
-            echo "has_delta_tasks=false" >> $GITHUB_OUTPUT
-          else
-            DELTA_TASK_COUNT=$(echo "$DELTA_TASK_BRANCH_PAIRS" | wc -l)
-            echo "🎯 Found $DELTA_TASK_COUNT delta tasks for cp-web-next-test:"
-            echo "$DELTA_TASK_BRANCH_PAIRS" | while IFS=$'\t' read -r task_name branch_name task_id; do
-              echo "  📋 $task_name (Branch: $branch_name)"
-            done
-            echo "has_delta_tasks=true" >> $GITHUB_OUTPUT
-            echo "delta_task_count=$DELTA_TASK_COUNT" >> $GITHUB_OUTPUT
-            # Store the paired data in outputs for next step
-            echo "delta_task_branch_pairs<<EOF" >> $GITHUB_OUTPUT
-            echo "$DELTA_TASK_BRANCH_PAIRS" >> $GITHUB_OUTPUT
-            echo "EOF" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Merge Delta Tasks
-        id: merge_delta_tasks
-        if: steps.fetch_delta_tasks.outputs.has_delta_tasks == 'true'
-        run: |
-          cleanup() {
-            rm -f /tmp/delta_tasks_to_process.txt /tmp/clickup_delta_response.json
-          }
-          trap cleanup EXIT
-
-          DELTA_BRANCH_NAME="${{ steps.create_delta_branch.outputs.delta_branch_name }}"
-          TOTAL_DELTA_TASKS="${{ steps.fetch_delta_tasks.outputs.delta_task_count }}"
-          DELTA_MERGED_COUNT=0
-          DELTA_FAILED_TASKS=()
-
-          echo "🚀 Starting delta merge process for $TOTAL_DELTA_TASKS tasks..."
-
-          # Enhanced cleanup function for git operations
-          cleanup_git() {
-            git merge --abort 2>/dev/null || true
-            git clean -fd 2>/dev/null || true
-          }
-
-          # Checkout the delta branch
-          if ! git checkout $DELTA_BRANCH_NAME; then
-            echo "::error::❌ Failed to checkout delta branch $DELTA_BRANCH_NAME"
-            exit 1
-          fi
-
-          # Get delta task-branch pairs from previous step output
-          DELTA_TASK_BRANCH_PAIRS="${{ steps.fetch_delta_tasks.outputs.delta_task_branch_pairs }}"
-
-          # Process each delta task-branch pair using temporary file to avoid subshell variable scope issues
-          echo "$DELTA_TASK_BRANCH_PAIRS" > /tmp/delta_tasks_to_process.txt
-
-          while IFS=$'\t' read -r task_name branch_name task_id; do
-            if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
-              echo ""
-              echo "📦 Processing delta task ($((DELTA_MERGED_COUNT + 1))/$TOTAL_DELTA_TASKS): $task_name"
-              echo "   Branch: $branch_name"
-              
-              # Check if branch exists remotely
-              if git ls-remote --exit-code --heads origin "$branch_name" >/dev/null 2>&1; then
-                echo "✅ Branch exists remotely"
-                
-                # Fetch the latest version of the branch
-                if git fetch origin "$branch_name" 2>/dev/null; then
-                  echo "📥 Fetched latest version"
-                  
-                  # Check if there are any changes to merge
-                  if git merge-tree $(git merge-base HEAD "origin/$branch_name") HEAD "origin/$branch_name" | grep -q .; then
-                    echo "🔄 Changes detected, performing squash merge..."
-                    
-                    # Use squash merge to keep history clean
-                    echo "🔧 Executing: git merge origin/$branch_name --squash --no-edit"
-                    if git merge "origin/$branch_name" --squash --no-edit; then
-                      echo "🔍 Checking for staged changes..."
-                      # Check if there are changes to commit
-                      if ! git diff --cached --quiet; then
-                        if git commit -m "feat: merge delta $branch_name"; then
-                          echo "✅ Successfully squash merged delta $branch_name"
-                          DELTA_MERGED_COUNT=$((DELTA_MERGED_COUNT + 1))
-                        else
-                          echo "❌ Failed to commit squash merge for delta $branch_name"
-                          cleanup_git
-                          DELTA_FAILED_TASKS+=("$task_name ($branch_name): Commit failed")
-                        fi
-                      else
-                        echo "ℹ️ No changes to commit (already up to date)"
-                        DELTA_MERGED_COUNT=$((DELTA_MERGED_COUNT + 1))
-                      fi
-                    else
-                      echo "❌ Merge conflict detected for delta $branch_name"
-                      echo "::error::Merge conflict detected for delta task: $task_name (branch: $branch_name)"
-                      cleanup_git
-                      DELTA_FAILED_TASKS+=("$task_name ($branch_name): Merge conflict")
-                    fi
-                  else
-                    echo "ℹ️ No changes to merge (already up to date)"
-                    DELTA_MERGED_COUNT=$((DELTA_MERGED_COUNT + 1))
-                  fi
-                else
-                  echo "❌ Failed to fetch branch $branch_name"
-                  DELTA_FAILED_TASKS+=("$task_name ($branch_name): Failed to fetch")
-                fi
-              else
-                echo "❌ Branch $branch_name not found remotely"
-                echo "::warning::Branch not found for delta task: $task_name"
-                DELTA_FAILED_TASKS+=("$task_name ($branch_name): Branch not found")
-              fi
-            fi
-          done < /tmp/delta_tasks_to_process.txt
-
+          # Add to step summary
           {
-            echo "### Merge Delta Tasks Summary"
-            echo "- Total delta tasks: $TOTAL_DELTA_TASKS"
-            echo "- Successfully merged: $DELTA_MERGED_COUNT"
-            echo "- Failed delta tasks: ${#DELTA_FAILED_TASKS[@]}"
-            if [ ${#DELTA_FAILED_TASKS[@]} -gt 0 ]; then
-              echo "- List of failed delta tasks:"
-              for task in "${DELTA_FAILED_TASKS[@]}"; do
-                echo "  - $task"
+            echo "### Delta Tasks Processing Summary"
+            echo "- **Total delta tasks:** $total_tasks"
+            echo "- **Successfully merged:** $merged_count"
+            echo "- **Failed:** $failed_count"
+            echo "- **Status:** $([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "✅ All tasks merged" || echo "⚠️ Partial success or no tasks")"
+            
+            # Add failed tasks details if any
+            if [ -n "$failed_tasks_str" ] && [ "$failed_count" -gt 0 ]; then
+              echo ""
+              echo "**❌ Failed Tasks:**"
+              IFS='|' read -ra failed_tasks <<< "$failed_tasks_str"
+              for task in "${failed_tasks[@]}"; do
+                echo "   - $task"
               done
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
-          # Clean up temporary file
-          rm -f /tmp/delta_tasks_to_process.txt
+          # Clean up
+          rm -f /tmp/clickup_delta_response.json
 
-          # Generate delta merge summary
-          echo ""
-          echo "📊 Delta Merge Summary:"
-          echo "   Total delta tasks: $TOTAL_DELTA_TASKS"
-          echo "   Successfully merged: $DELTA_MERGED_COUNT"
-          echo "   Failed: ${#DELTA_FAILED_TASKS[@]}"
+      - name: Generate Final Summary
+        if: always()
+        run: |
+          # Collect all the status information
+          BETA_HAS_TASKS="${{ steps.process_beta.outputs.has_tasks }}"
+          BETA_MERGED="${{ steps.process_beta.outputs.merged_count }}"
+          BETA_TOTAL="${{ steps.process_beta.outputs.total_tasks }}"
+          BETA_ALL_MERGED="${{ steps.process_beta.outputs.all_tasks_merged }}"
+          BETA_FAILED_TASKS="${{ steps.process_beta.outputs.failed_tasks_str }}"
 
-          # Report failed delta tasks if any
-          if [ ${#DELTA_FAILED_TASKS[@]} -gt 0 ]; then
+          DELTA_CREATED="${{ steps.create_delta.outputs.branch_created }}"
+          DELTA_EXISTS="${{ steps.create_delta.outputs.branch_exists }}"
+          DELTA_HAS_TASKS="${{ steps.process_delta.outputs.has_tasks }}"
+          DELTA_MERGED="${{ steps.process_delta.outputs.merged_count }}"
+          DELTA_TOTAL="${{ steps.process_delta.outputs.total_tasks }}"
+          DELTA_FAILED_TASKS="${{ steps.process_delta.outputs.failed_tasks_str }}"
+
+          echo "📋 Final Status Summary:"
+          echo "   Beta branch: $BETA_BRANCH"
+          echo "   Delta branch: $DELTA_BRANCH"
+          echo "   Beta tasks: $BETA_MERGED/$BETA_TOTAL"
+          echo "   Delta tasks: $DELTA_MERGED/$DELTA_TOTAL"
+
+          # Generate comprehensive summary
+          {
+            echo "## 📊 Weekly Branch Creation Summary"
             echo ""
-            echo "❌ Failed delta tasks:"
-            for task in "${DELTA_FAILED_TASKS[@]}"; do
-              echo "   $task"
-            done
+            echo "**🔵 Beta Branch:** \`$BETA_BRANCH\`"
             
-            # Create summary for GitHub
-            {
-              echo "## Delta Merge Summary"
+            if [ "$DELTA_CREATED" = "true" ] || [ "$DELTA_EXISTS" = "true" ]; then
+              echo "**🟡 Delta Branch:** \`$DELTA_BRANCH\`"
+            fi
+            
+            echo ""
+            
+            # Determine overall status
+            if [ "$BETA_HAS_TASKS" = "false" ] && [ "$DELTA_HAS_TASKS" = "false" ]; then
+              echo "✅ **Status:** No tasks to process (normal situation)"
+            elif [ "$BETA_ALL_MERGED" = "true" ] && [ "$DELTA_CREATED" = "true" ]; then
+              echo "🎉 **Status:** Perfect! All beta tasks merged, delta branch created"
+              if [ "$DELTA_HAS_TASKS" = "true" ]; then
+                echo "🚀 **Bonus:** Delta tasks also processed ($DELTA_MERGED/$DELTA_TOTAL)"
+              fi
+            elif [ "$BETA_ALL_MERGED" = "true" ]; then
+              echo "✅ **Status:** All beta tasks merged successfully"
+            elif [ "$BETA_HAS_TASKS" = "true" ] && [ "${BETA_MERGED:-0}" -gt 0 ]; then
+              echo "⚠️ **Status:** Partial beta success ($BETA_MERGED/$BETA_TOTAL tasks merged)"
+            elif [ "$DELTA_HAS_TASKS" = "true" ] && [ "${DELTA_MERGED:-0}" -gt 0 ]; then
+              echo "⚠️ **Status:** Delta tasks processed ($DELTA_MERGED/$DELTA_TOTAL tasks merged)"
+            else
+              echo "❌ **Status:** Task processing failed"
+            fi
+            
+            echo ""
+            echo "**🕐 Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+            
+            echo ""
+            echo "---"
+            echo "### 📈 Statistics"
+            echo "| Branch Type | Tasks Found | Successfully Merged | Success Rate |"
+            echo "|-------------|-------------|---------------------|--------------|"
+            echo "| Beta | ${BETA_TOTAL:-0} | ${BETA_MERGED:-0} | $([[ ${BETA_TOTAL:-0} -gt 0 ]] && echo "$(( (${BETA_MERGED:-0} * 100) / ${BETA_TOTAL:-0} ))%" || echo "N/A") |"
+            if [ "$DELTA_HAS_TASKS" = "true" ]; then
+              echo "| Delta | ${DELTA_TOTAL:-0} | ${DELTA_MERGED:-0} | $([[ ${DELTA_TOTAL:-0} -gt 0 ]] && echo "$(( (${DELTA_MERGED:-0} * 100) / ${DELTA_TOTAL:-0} ))%" || echo "N/A") |"
+            fi
+            
+            # Add failed tasks summary if any
+            if [ -n "$BETA_FAILED_TASKS" ] || [ -n "$DELTA_FAILED_TASKS" ]; then
               echo ""
-              echo "- ✅ Successfully merged: $DELTA_MERGED_COUNT/$TOTAL_DELTA_TASKS delta tasks"
-              echo "- ❌ Failed: ${#DELTA_FAILED_TASKS[@]} delta tasks"
-              echo ""
-              if [ ${#DELTA_FAILED_TASKS[@]} -gt 0 ]; then
-                echo "### Failed Delta Tasks:"
-                for task in "${DELTA_FAILED_TASKS[@]}"; do
+              echo "### ❌ Failed Tasks Summary"
+              if [ -n "$BETA_FAILED_TASKS" ]; then
+                echo "**🔵 Beta Branch Failed Tasks:**"
+                IFS='|' read -ra failed_tasks <<< "$BETA_FAILED_TASKS"
+                for task in "${failed_tasks[@]}"; do
+                  echo "- $task"
+                done
+                echo ""
+              fi
+              
+              if [ -n "$DELTA_FAILED_TASKS" ]; then
+                echo "**🟡 Delta Branch Failed Tasks:**"
+                IFS='|' read -ra failed_tasks <<< "$DELTA_FAILED_TASKS"
+                for task in "${failed_tasks[@]}"; do
                   echo "- $task"
                 done
               fi
-            } >> $GITHUB_STEP_SUMMARY
-          fi
-
-          # Push changes if any delta merges were successful
-          if [ $DELTA_MERGED_COUNT -gt 0 ]; then
-            echo ""
-            echo "📤 Pushing $DELTA_MERGED_COUNT successful delta merges..."
-            if git push origin $DELTA_BRANCH_NAME; then
-              echo "✅ Successfully pushed all delta changes"
-              echo "delta_merge_success=true" >> $GITHUB_OUTPUT
-              echo "delta_merged_count=$DELTA_MERGED_COUNT" >> $GITHUB_OUTPUT
-            else
-              echo "::error::❌ Failed to push delta changes"
-              exit 1
             fi
-          else
-            echo "⚠️ No delta changes to push"
-            echo "delta_merge_success=false" >> $GITHUB_OUTPUT
-            echo "delta_merged_count=0" >> $GITHUB_OUTPUT
-          fi
-
-          # Check if all delta tasks were successfully merged (perfect scenario)
-          if [ $DELTA_MERGED_COUNT -eq $TOTAL_DELTA_TASKS ]; then
-            echo "all_delta_tasks_merged=true" >> $GITHUB_OUTPUT
-            echo "🎉 All delta tasks successfully merged!"
-          else
-            echo "all_delta_tasks_merged=false" >> $GITHUB_OUTPUT
-          fi
-
-          # Exit with error if some delta tasks failed but allow partial success
-          if [ ${#DELTA_FAILED_TASKS[@]} -gt 0 ] && [ $DELTA_MERGED_COUNT -eq 0 ]; then
-            echo "::error::❌ All delta merge operations failed"
-            echo "delta_merge_success=false" >> $GITHUB_OUTPUT
-            echo "delta_merged_count=0" >> $GITHUB_OUTPUT
-            exit 1
-          elif [ ${#DELTA_FAILED_TASKS[@]} -gt 0 ]; then
-            echo "::warning::⚠️ Some delta tasks failed but $DELTA_MERGED_COUNT tasks were successfully merged"
-            echo "delta_merge_success=true" >> $GITHUB_OUTPUT
-            echo "delta_merged_count=$DELTA_MERGED_COUNT" >> $GITHUB_OUTPUT
-          else
-            echo "delta_merge_success=true" >> $GITHUB_OUTPUT
-            echo "delta_merged_count=$DELTA_MERGED_COUNT" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Handle Different Scenarios
-        if: always()
-        run: |
-          BRANCH_EXISTS="${{ steps.create_branch.outputs.branch_exists }}"
-          HAS_TASKS="${{ steps.fetch_tasks.outputs.has_tasks }}"
-          MERGE_SUCCESS="${{ steps.merge_beta_tasks.outputs.merge_success }}"
-          MERGED_COUNT="${{ steps.merge_beta_tasks.outputs.merged_count }}"
-          ALL_TASKS_MERGED="${{ steps.merge_beta_tasks.outputs.all_tasks_merged }}"
-          DELTA_CREATED="${{ steps.create_delta_branch.outputs.delta_branch_created }}"
-          DELTA_EXISTS="${{ steps.create_delta_branch.outputs.delta_branch_exists }}"
-          HAS_DELTA_TASKS="${{ steps.fetch_delta_tasks.outputs.has_delta_tasks }}"
-          DELTA_MERGE_SUCCESS="${{ steps.merge_delta_tasks.outputs.delta_merge_success }}"
-          DELTA_MERGED_COUNT="${{ steps.merge_delta_tasks.outputs.delta_merged_count }}"
-          ALL_DELTA_TASKS_MERGED="${{ steps.merge_delta_tasks.outputs.all_delta_tasks_merged }}"
-
-          echo "📋 Final Status Summary:"
-          echo "   Branch exists: $BRANCH_EXISTS"
-          echo "   Has tasks: $HAS_TASKS"
-          echo "   Merge success: $MERGE_SUCCESS"
-          echo "   Merged count: $MERGED_COUNT"
-          echo "   All tasks merged: $ALL_TASKS_MERGED"
-          echo "   Delta created: $DELTA_CREATED"
-          echo "   Delta exists: $DELTA_EXISTS"
-          echo "   Has delta tasks: $HAS_DELTA_TASKS"
-          echo "   Delta merge success: $DELTA_MERGE_SUCCESS"
-          echo "   Delta merged count: $DELTA_MERGED_COUNT"
-          echo "   All delta tasks merged: $ALL_DELTA_TASKS_MERGED"
-
-          # Generate final summary
-          {
-            echo "## Weekly Beta Branch Creation Summary"
-            echo ""
-            echo "**Beta Branch:** \`${{ steps.create_branch.outputs.branch_name }}\`"
-            
-            if [ "$DELTA_CREATED" = "true" ] || [ "$DELTA_EXISTS" = "true" ]; then
-              DELTA_BRANCH_NAME="${{ steps.create_delta_branch.outputs.delta_branch_name }}"
-              echo "**Delta Branch:** \`$DELTA_BRANCH_NAME\`"
-            fi
-            
-            echo ""
-            
-            if [ "$BRANCH_EXISTS" = "true" ] && [ "$HAS_TASKS" = "false" ]; then
-              echo "✅ **Status:** Branch already exists, no new tasks to merge (normal situation)"
-            elif [ "$BRANCH_EXISTS" = "false" ] && [ "$HAS_TASKS" = "false" ]; then
-              echo "✅ **Status:** New branch created, no tasks found (normal situation)"
-            elif [ "$HAS_TASKS" = "true" ] && [ "$ALL_TASKS_MERGED" = "true" ] && [ "$DELTA_CREATED" = "true" ]; then
-              echo "🎉 **Status:** Perfect! All $MERGED_COUNT beta tasks merged successfully, delta branch created"
-            elif [ "$HAS_TASKS" = "true" ] && [ "$ALL_TASKS_MERGED" = "true" ] && [ "$DELTA_EXISTS" = "true" ]; then
-              echo "✅ **Status:** All $MERGED_COUNT beta tasks merged successfully, delta branch already exists"
-            elif [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "true" ]; then
-              echo "⚠️ **Status:** Partially successful - $MERGED_COUNT beta tasks merged (some failed, delta not created)"
-            elif [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "false" ]; then
-              echo "❌ **Status:** Beta task merge failed"
-            else
-              echo "ℹ️ **Status:** Workflow completed"
-            fi
-            
-            # Add delta task summary if applicable
-            if [ "$HAS_DELTA_TASKS" = "true" ]; then
-              echo ""
-              echo "### Delta Tasks Summary"
-              if [ "$ALL_DELTA_TASKS_MERGED" = "true" ]; then
-                echo "🎉 **Delta Status:** All $DELTA_MERGED_COUNT delta tasks merged successfully!"
-              elif [ "$DELTA_MERGE_SUCCESS" = "true" ]; then
-                echo "⚠️ **Delta Status:** Partially successful - $DELTA_MERGED_COUNT delta tasks merged (some failed)"
-              else
-                echo "❌ **Delta Status:** Delta task merge failed"
-              fi
-            fi
-            
-            echo ""
-            echo "**Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
           } >> $GITHUB_STEP_SUMMARY
 
-          # Only exit with error for actual failures, not expected scenarios
-          if [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "false" ] && [ "${MERGED_COUNT:-0}" = "0" ]; then
-            echo "::error::❌ Workflow failed due to beta merge issues"
+          # Clean up temporary files
+          rm -f /tmp/common_functions.sh
+
+          # Determine final exit code
+          BETA_SUCCESS="${{ steps.process_beta.outputs.process_success }}"
+          DELTA_SUCCESS="${{ steps.process_delta.outputs.process_success }}"
+
+          if [ "$BETA_HAS_TASKS" = "true" ] && [ "$BETA_SUCCESS" = "false" ]; then
+            echo "::error::❌ Beta task processing failed"
             exit 1
-          elif [ "$HAS_DELTA_TASKS" = "true" ] && [ "$DELTA_MERGE_SUCCESS" = "false" ] && [ "${DELTA_MERGED_COUNT:-0}" = "0" ]; then
-            echo "::error::❌ Workflow failed due to delta merge issues"
+          elif [ "$DELTA_HAS_TASKS" = "true" ] && [ "$DELTA_SUCCESS" = "false" ]; then
+            echo "::error::❌ Delta task processing failed"
             exit 1
-          elif [ "$HAS_TASKS" = "true" ] && [ "$MERGE_SUCCESS" = "true" ]; then
-            echo "✅ Workflow completed successfully with $MERGED_COUNT beta tasks merged"
-            if [ "$ALL_TASKS_MERGED" = "true" ] && [ "$DELTA_CREATED" = "true" ]; then
-              echo "🎉 Bonus: Delta branch created for deployment!"
-            fi
-            if [ "$HAS_DELTA_TASKS" = "true" ] && [ "$DELTA_MERGE_SUCCESS" = "true" ]; then
-              echo "🎉 Bonus: $DELTA_MERGED_COUNT delta tasks merged!"
-            fi
-            exit 0
-          elif [ "$HAS_DELTA_TASKS" = "true" ] && [ "$DELTA_MERGE_SUCCESS" = "true" ]; then
-            echo "✅ Workflow completed successfully with $DELTA_MERGED_COUNT delta tasks merged"
-            exit 0
           else
-            echo "✅ Workflow completed successfully (no tasks to merge)"
+            echo "✅ Workflow completed successfully"
             exit 0
           fi
