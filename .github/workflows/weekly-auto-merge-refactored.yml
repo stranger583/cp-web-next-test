@@ -31,24 +31,24 @@ jobs:
         run: |
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
-          
+
           # Set up common variables
           YEAR=$(date +'%y')
           WEEK=$(date +'%V')
           BETA_BRANCH="$BRANCH_PREFIX_BETA-${YEAR}${WEEK}-auto"
           DELTA_BRANCH="$BRANCH_PREFIX_DELTA-${YEAR}${WEEK}-auto"
-          
+
           echo "YEAR=$YEAR" >> $GITHUB_ENV
           echo "WEEK=$WEEK" >> $GITHUB_ENV
           echo "BETA_BRANCH=$BETA_BRANCH" >> $GITHUB_ENV
           echo "DELTA_BRANCH=$DELTA_BRANCH" >> $GITHUB_ENV
-          
+
           echo "📅 Beta branch: $BETA_BRANCH"
           echo "📅 Delta branch: $DELTA_BRANCH"
-          
+
           # Common functions
           cat << 'FUNCTIONS' > /tmp/common_functions.sh
-          
+
           # Fetch tasks from ClickUp API
           fetch_clickup_tasks() {
             local status="$1"
@@ -78,7 +78,7 @@ jobs:
             echo "✅ Successfully fetched $status tasks"
             return 0
           }
-          
+
           # Parse tasks and return task-branch pairs
           parse_tasks() {
             local input_file="$1"
@@ -93,13 +93,13 @@ jobs:
             select(\$branch != null and \$branch != \"\") |
             \"\(.name)\t\(\$branch)\t\(.id)\"" "$input_file" | sort
           }
-          
+
           # Clean up git state
           cleanup_git() {
             git merge --abort 2>/dev/null || true
             git clean -fd 2>/dev/null || true
           }
-          
+
           # Merge a single task branch
           merge_task_branch() {
             local task_name="$1"
@@ -157,7 +157,7 @@ jobs:
               return 0
             fi
           }
-          
+
           # Process multiple tasks
           process_tasks() {
             local task_data="$1"
@@ -166,7 +166,7 @@ jobs:
             
             if [ -z "$task_data" ]; then
               echo "ℹ️ No $task_type tasks found for $REPOSITORY_NAME repository"
-              echo "0"
+              echo "0:0:0"
               return 0
             fi
             
@@ -175,9 +175,9 @@ jobs:
             local failed_tasks=()
             
             echo "🎯 Found $total_tasks $task_type tasks for $REPOSITORY_NAME:"
-            echo "$task_data" | while IFS=$'\t' read -r task_name branch_name task_id; do
+            while IFS=$'\t' read -r task_name branch_name task_id; do
               echo "  📋 $task_name (Branch: $branch_name)"
-            done
+            done <<< "$task_data"
             
             echo "🚀 Starting $task_type merge process for $total_tasks tasks..."
             
@@ -187,10 +187,7 @@ jobs:
               return 1
             fi
             
-            # Process each task
-            local temp_file="/tmp/${task_type}_tasks.txt"
-            echo "$task_data" > "$temp_file"
-            
+            # Process each task using here-string to avoid subshell issues
             while IFS=$'\t' read -r task_name branch_name task_id; do
               if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
                 if merge_task_branch "$task_name" "$branch_name" "$task_type"; then
@@ -199,9 +196,7 @@ jobs:
                   failed_tasks+=("$task_name ($branch_name)")
                 fi
               fi
-            done < "$temp_file"
-            
-            rm -f "$temp_file"
+            done <<< "$task_data"
             
             # Generate summary
             echo "📊 $task_type Merge Summary:"
@@ -234,14 +229,14 @@ jobs:
             echo "$merged_count:$total_tasks:${#failed_tasks[@]}"
           }
           FUNCTIONS
-          
+
           source /tmp/common_functions.sh
 
       - name: Create Beta Branch
         id: create_beta
         run: |
           echo "📅 Creating beta branch: $BETA_BRANCH"
-          
+
           if git ls-remote --exit-code --heads origin $BETA_BRANCH; then
             echo "⚠️ Beta branch $BETA_BRANCH already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
@@ -251,29 +246,29 @@ jobs:
             git push origin $BETA_BRANCH
             echo "branch_exists=false" >> $GITHUB_OUTPUT
           fi
-          
+
           echo "branch_name=$BETA_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Process Beta Tasks
         id: process_beta
         run: |
           source /tmp/common_functions.sh
-          
+
           # Fetch beta tasks
           if ! fetch_clickup_tasks "beta" "/tmp/clickup_beta_response.json"; then
             echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
-          
+
           # Parse beta tasks
           BETA_TASK_DATA=$(parse_tasks "/tmp/clickup_beta_response.json" "beta")
-          
+
           # Process beta tasks
           BETA_RESULT=$(process_tasks "$BETA_TASK_DATA" "beta" "$BETA_BRANCH")
-          
+
           # Parse results
           IFS=':' read -r merged_count total_tasks failed_count <<< "$BETA_RESULT"
-          
+
           # Set outputs
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
           echo "total_tasks=$total_tasks" >> $GITHUB_OUTPUT
@@ -281,7 +276,7 @@ jobs:
           echo "all_tasks_merged=$([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "process_success=$([[ $failed_count -eq 0 || $merged_count -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "has_tasks=$([[ $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
-          
+
           # Add to step summary
           {
             echo "### Beta Tasks Processing Summary"
@@ -290,7 +285,7 @@ jobs:
             echo "- **Failed:** $failed_count"
             echo "- **Status:** $([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "✅ All tasks merged" || echo "⚠️ Partial success or no tasks")"
           } >> "$GITHUB_STEP_SUMMARY"
-          
+
           # Clean up
           rm -f /tmp/clickup_beta_response.json
 
@@ -301,7 +296,7 @@ jobs:
           echo "🎉 All beta tasks successfully merged! Creating delta branch..."
           echo "   Source branch: $BETA_BRANCH"
           echo "   Delta branch: $DELTA_BRANCH"
-          
+
           if git ls-remote --exit-code --heads origin $DELTA_BRANCH; then
             echo "⚠️ Delta branch $DELTA_BRANCH already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
@@ -331,7 +326,7 @@ jobs:
               exit 1
             fi
           fi
-          
+
           echo "branch_name=$DELTA_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Process Delta Tasks
@@ -339,25 +334,25 @@ jobs:
         if: steps.create_delta.outputs.branch_created == 'true' || steps.create_delta.outputs.branch_exists == 'true'
         run: |
           source /tmp/common_functions.sh
-          
+
           # Use existing delta branch or the one we just created
           DELTA_BRANCH_NAME="${{ steps.create_delta.outputs.branch_name }}"
-          
+
           # Fetch delta tasks
           if ! fetch_clickup_tasks "delta" "/tmp/clickup_delta_response.json"; then
             echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
           fi
-          
+
           # Parse delta tasks
           DELTA_TASK_DATA=$(parse_tasks "/tmp/clickup_delta_response.json" "delta")
-          
+
           # Process delta tasks
           DELTA_RESULT=$(process_tasks "$DELTA_TASK_DATA" "delta" "$DELTA_BRANCH_NAME")
-          
+
           # Parse results
           IFS=':' read -r merged_count total_tasks failed_count <<< "$DELTA_RESULT"
-          
+
           # Set outputs
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
           echo "total_tasks=$total_tasks" >> $GITHUB_OUTPUT
@@ -365,7 +360,7 @@ jobs:
           echo "all_tasks_merged=$([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "process_success=$([[ $failed_count -eq 0 || $merged_count -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "has_tasks=$([[ $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
-          
+
           # Add to step summary
           {
             echo "### Delta Tasks Processing Summary"
@@ -374,7 +369,7 @@ jobs:
             echo "- **Failed:** $failed_count"
             echo "- **Status:** $([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "✅ All tasks merged" || echo "⚠️ Partial success or no tasks")"
           } >> "$GITHUB_STEP_SUMMARY"
-          
+
           # Clean up
           rm -f /tmp/clickup_delta_response.json
 
@@ -386,19 +381,19 @@ jobs:
           BETA_MERGED="${{ steps.process_beta.outputs.merged_count }}"
           BETA_TOTAL="${{ steps.process_beta.outputs.total_tasks }}"
           BETA_ALL_MERGED="${{ steps.process_beta.outputs.all_tasks_merged }}"
-          
+
           DELTA_CREATED="${{ steps.create_delta.outputs.branch_created }}"
           DELTA_EXISTS="${{ steps.create_delta.outputs.branch_exists }}"
           DELTA_HAS_TASKS="${{ steps.process_delta.outputs.has_tasks }}"
           DELTA_MERGED="${{ steps.process_delta.outputs.merged_count }}"
           DELTA_TOTAL="${{ steps.process_delta.outputs.total_tasks }}"
-          
+
           echo "📋 Final Status Summary:"
           echo "   Beta branch: $BETA_BRANCH"
           echo "   Delta branch: $DELTA_BRANCH"
           echo "   Beta tasks: $BETA_MERGED/$BETA_TOTAL"
           echo "   Delta tasks: $DELTA_MERGED/$DELTA_TOTAL"
-          
+
           # Generate comprehensive summary
           {
             echo "## 📊 Weekly Branch Creation Summary"
@@ -442,14 +437,14 @@ jobs:
               echo "| Delta | ${DELTA_TOTAL:-0} | ${DELTA_MERGED:-0} | $([[ ${DELTA_TOTAL:-0} -gt 0 ]] && echo "$(( (${DELTA_MERGED:-0} * 100) / ${DELTA_TOTAL:-0} ))%" || echo "N/A") |"
             fi
           } >> $GITHUB_STEP_SUMMARY
-          
+
           # Clean up temporary files
           rm -f /tmp/common_functions.sh
-          
+
           # Determine final exit code
           BETA_SUCCESS="${{ steps.process_beta.outputs.process_success }}"
           DELTA_SUCCESS="${{ steps.process_delta.outputs.process_success }}"
-          
+
           if [ "$BETA_HAS_TASKS" = "true" ] && [ "$BETA_SUCCESS" = "false" ]; then
             echo "::error::❌ Beta task processing failed"
             exit 1
