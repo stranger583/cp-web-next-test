@@ -255,6 +255,9 @@ jobs:
           source /tmp/common_functions.sh
 
           echo "🚀 Starting beta task processing..."
+
+          # Get BETA_BRANCH from environment
+          BETA_BRANCH="${{ env.BETA_BRANCH }}"
           echo "🔍 Debug: BETA_BRANCH = '$BETA_BRANCH'"
 
           # Fetch beta tasks
@@ -372,7 +375,11 @@ jobs:
         run: |
           source /tmp/common_functions.sh
 
-          echo "🚀 Starting delta task processing..."
+                    echo "🚀 Starting delta task processing..."
+
+          # Get DELTA_BRANCH from environment
+          DELTA_BRANCH="${{ env.DELTA_BRANCH }}"
+          echo "🔍 Debug: DELTA_BRANCH = '$DELTA_BRANCH'"
 
           # Use existing delta branch or the one we just created
           DELTA_BRANCH_NAME="${{ steps.create_delta.outputs.branch_name }}"
