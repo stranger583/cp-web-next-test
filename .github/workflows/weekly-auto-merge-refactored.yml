@@ -254,6 +254,9 @@ jobs:
         run: |
           source /tmp/common_functions.sh
 
+          echo "🚀 Starting beta task processing..."
+          echo "🔍 Debug: BETA_BRANCH = '$BETA_BRANCH'"
+
           # Fetch beta tasks
           if ! fetch_clickup_tasks "beta" "/tmp/clickup_beta_response.json"; then
             echo "process_success=false" >> $GITHUB_OUTPUT
@@ -262,18 +265,46 @@ jobs:
 
           # Parse beta tasks
           BETA_TASK_DATA=$(parse_tasks "/tmp/clickup_beta_response.json" "beta")
+          echo "🔍 Debug: BETA_TASK_DATA = '$BETA_TASK_DATA'"
+
+          # Check if we have tasks
+          if [ -z "$BETA_TASK_DATA" ]; then
+            echo "⚠️ No beta tasks found, setting default values"
+            echo "merged_count=0" >> $GITHUB_OUTPUT
+            echo "total_tasks=0" >> $GITHUB_OUTPUT
+            echo "failed_count=0" >> $GITHUB_OUTPUT
+            echo "all_tasks_merged=false" >> $GITHUB_OUTPUT
+            echo "process_success=true" >> $GITHUB_OUTPUT
+            echo "has_tasks=false" >> $GITHUB_OUTPUT
+            
+            {
+              echo "### Beta Tasks Processing Summary"
+              echo "- **Total beta tasks:** 0"
+              echo "- **Successfully merged:** 0"
+              echo "- **Failed:** 0"
+              echo "- **Status:** ⚠️ No tasks to process"
+            } >> "$GITHUB_STEP_SUMMARY"
+            
+            rm -f /tmp/clickup_beta_response.json
+            exit 0
+          fi
 
           # Process beta tasks
+          echo "🔍 Debug: Calling process_tasks with: '$BETA_TASK_DATA'"
           BETA_RESULT=$(process_tasks "$BETA_TASK_DATA" "beta" "$BETA_BRANCH")
-
-          # Debug: Show the raw result
           echo "🔍 Debug: BETA_RESULT = '$BETA_RESULT'"
 
           # Parse results
           IFS=':' read -r merged_count total_tasks failed_count <<< "$BETA_RESULT"
+          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
 
-          # Debug: Show parsed values
-          echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+          # Validate parsed values
+          if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
+            echo "❌ Error: Failed to parse BETA_RESULT properly"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
           # Set outputs
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
@@ -341,8 +372,11 @@ jobs:
         run: |
           source /tmp/common_functions.sh
 
+          echo "🚀 Starting delta task processing..."
+
           # Use existing delta branch or the one we just created
           DELTA_BRANCH_NAME="${{ steps.create_delta.outputs.branch_name }}"
+          echo "🔍 Debug: DELTA_BRANCH_NAME = '$DELTA_BRANCH_NAME'"
 
           # Fetch delta tasks
           if ! fetch_clickup_tasks "delta" "/tmp/clickup_delta_response.json"; then
@@ -352,18 +386,46 @@ jobs:
 
           # Parse delta tasks
           DELTA_TASK_DATA=$(parse_tasks "/tmp/clickup_delta_response.json" "delta")
+          echo "🔍 Debug: DELTA_TASK_DATA = '$DELTA_TASK_DATA'"
+
+          # Check if we have tasks
+          if [ -z "$DELTA_TASK_DATA" ]; then
+            echo "⚠️ No delta tasks found, setting default values"
+            echo "merged_count=0" >> $GITHUB_OUTPUT
+            echo "total_tasks=0" >> $GITHUB_OUTPUT
+            echo "failed_count=0" >> $GITHUB_OUTPUT
+            echo "all_tasks_merged=false" >> $GITHUB_OUTPUT
+            echo "process_success=true" >> $GITHUB_OUTPUT
+            echo "has_tasks=false" >> $GITHUB_OUTPUT
+            
+            {
+              echo "### Delta Tasks Processing Summary"
+              echo "- **Total delta tasks:** 0"
+              echo "- **Successfully merged:** 0"
+              echo "- **Failed:** 0"
+              echo "- **Status:** ⚠️ No tasks to process"
+            } >> "$GITHUB_STEP_SUMMARY"
+            
+            rm -f /tmp/clickup_delta_response.json
+            exit 0
+          fi
 
           # Process delta tasks
+          echo "🔍 Debug: Calling process_tasks with: '$DELTA_TASK_DATA'"
           DELTA_RESULT=$(process_tasks "$DELTA_TASK_DATA" "delta" "$DELTA_BRANCH_NAME")
-
-          # Debug: Show the raw result
           echo "🔍 Debug: DELTA_RESULT = '$DELTA_RESULT'"
 
           # Parse results
           IFS=':' read -r merged_count total_tasks failed_count <<< "$DELTA_RESULT"
+          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
 
-          # Debug: Show parsed values
-          echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+          # Validate parsed values
+          if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
+            echo "❌ Error: Failed to parse DELTA_RESULT properly"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
 
           # Set outputs
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
