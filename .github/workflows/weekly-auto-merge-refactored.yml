@@ -166,7 +166,7 @@ jobs:
             
             if [ -z "$task_data" ]; then
               echo "ℹ️ No $task_type tasks found for $REPOSITORY_NAME repository" >&2
-              echo "0:0:0"
+              echo "0:0:0:"
               return 0
             fi
             
@@ -225,8 +225,12 @@ jobs:
               echo "⚠️ No $task_type changes to push" >&2
             fi
             
-            # Return results - this is the only stdout output (critical fix!)
-            echo "$merged_count:$total_tasks:${#failed_tasks[@]}"
+            # Return results - now includes failed task names
+            local failed_tasks_str=""
+            if [ ${#failed_tasks[@]} -gt 0 ]; then
+              failed_tasks_str=$(printf "%s|" "${failed_tasks[@]}" | sed 's/|$//')
+            fi
+            echo "$merged_count:$total_tasks:${#failed_tasks[@]}:$failed_tasks_str"
           }
           FUNCTIONS
 
@@ -298,8 +302,8 @@ jobs:
           echo "🔍 Debug: BETA_RESULT = '$BETA_RESULT'"
 
           # Parse results
-          IFS=':' read -r merged_count total_tasks failed_count <<< "$BETA_RESULT"
-          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+          IFS=':' read -r merged_count total_tasks failed_count failed_tasks_str <<< "$BETA_RESULT"
+          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count', failed_tasks_str='$failed_tasks_str'"
 
           # Validate parsed values
           if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
@@ -321,6 +325,7 @@ jobs:
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
           echo "total_tasks=$total_tasks" >> $GITHUB_OUTPUT
           echo "failed_count=$failed_count" >> $GITHUB_OUTPUT
+          echo "failed_tasks_str=$failed_tasks_str" >> $GITHUB_OUTPUT
           echo "all_tasks_merged=$([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "process_success=$([[ $failed_count -eq 0 || $merged_count -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "has_tasks=$([[ $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
@@ -332,6 +337,16 @@ jobs:
             echo "- **Successfully merged:** $merged_count"
             echo "- **Failed:** $failed_count"
             echo "- **Status:** $([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "✅ All tasks merged" || echo "⚠️ Partial success or no tasks")"
+            
+            # Add failed tasks details if any
+            if [ -n "$failed_tasks_str" ] && [ "$failed_count" -gt 0 ]; then
+              echo ""
+              echo "**❌ Failed Tasks:**"
+              IFS='|' read -ra failed_tasks <<< "$failed_tasks_str"
+              for task in "${failed_tasks[@]}"; do
+                echo "  - $task"
+              done
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Clean up
@@ -431,8 +446,8 @@ jobs:
           echo "🔍 Debug: DELTA_RESULT = '$DELTA_RESULT'"
 
           # Parse results
-          IFS=':' read -r merged_count total_tasks failed_count <<< "$DELTA_RESULT"
-          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+          IFS=':' read -r merged_count total_tasks failed_count failed_tasks_str <<< "$DELTA_RESULT"
+          echo "🔍 Debug: parsed merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count', failed_tasks_str='$failed_tasks_str'"
 
           # Validate parsed values
           if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
@@ -454,6 +469,7 @@ jobs:
           echo "merged_count=$merged_count" >> $GITHUB_OUTPUT
           echo "total_tasks=$total_tasks" >> $GITHUB_OUTPUT
           echo "failed_count=$failed_count" >> $GITHUB_OUTPUT
+          echo "failed_tasks_str=$failed_tasks_str" >> $GITHUB_OUTPUT
           echo "all_tasks_merged=$([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "process_success=$([[ $failed_count -eq 0 || $merged_count -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
           echo "has_tasks=$([[ $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
@@ -465,6 +481,16 @@ jobs:
             echo "- **Successfully merged:** $merged_count"
             echo "- **Failed:** $failed_count"
             echo "- **Status:** $([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "✅ All tasks merged" || echo "⚠️ Partial success or no tasks")"
+            
+            # Add failed tasks details if any
+            if [ -n "$failed_tasks_str" ] && [ "$failed_count" -gt 0 ]; then
+              echo ""
+              echo "**❌ Failed Tasks:**"
+              IFS='|' read -ra failed_tasks <<< "$failed_tasks_str"
+              for task in "${failed_tasks[@]}"; do
+                echo "   - $task"
+              done
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
           # Clean up
@@ -478,12 +504,14 @@ jobs:
           BETA_MERGED="${{ steps.process_beta.outputs.merged_count }}"
           BETA_TOTAL="${{ steps.process_beta.outputs.total_tasks }}"
           BETA_ALL_MERGED="${{ steps.process_beta.outputs.all_tasks_merged }}"
+          BETA_FAILED_TASKS="${{ steps.process_beta.outputs.failed_tasks_str }}"
 
           DELTA_CREATED="${{ steps.create_delta.outputs.branch_created }}"
           DELTA_EXISTS="${{ steps.create_delta.outputs.branch_exists }}"
           DELTA_HAS_TASKS="${{ steps.process_delta.outputs.has_tasks }}"
           DELTA_MERGED="${{ steps.process_delta.outputs.merged_count }}"
           DELTA_TOTAL="${{ steps.process_delta.outputs.total_tasks }}"
+          DELTA_FAILED_TASKS="${{ steps.process_delta.outputs.failed_tasks_str }}"
 
           echo "📋 Final Status Summary:"
           echo "   Beta branch: $BETA_BRANCH"
@@ -532,6 +560,28 @@ jobs:
             echo "| Beta | ${BETA_TOTAL:-0} | ${BETA_MERGED:-0} | $([[ ${BETA_TOTAL:-0} -gt 0 ]] && echo "$(( (${BETA_MERGED:-0} * 100) / ${BETA_TOTAL:-0} ))%" || echo "N/A") |"
             if [ "$DELTA_HAS_TASKS" = "true" ]; then
               echo "| Delta | ${DELTA_TOTAL:-0} | ${DELTA_MERGED:-0} | $([[ ${DELTA_TOTAL:-0} -gt 0 ]] && echo "$(( (${DELTA_MERGED:-0} * 100) / ${DELTA_TOTAL:-0} ))%" || echo "N/A") |"
+            fi
+            
+            # Add failed tasks summary if any
+            if [ -n "$BETA_FAILED_TASKS" ] || [ -n "$DELTA_FAILED_TASKS" ]; then
+              echo ""
+              echo "### ❌ Failed Tasks Summary"
+              if [ -n "$BETA_FAILED_TASKS" ]; then
+                echo "**🔵 Beta Branch Failed Tasks:**"
+                IFS='|' read -ra failed_tasks <<< "$BETA_FAILED_TASKS"
+                for task in "${failed_tasks[@]}"; do
+                  echo "- $task"
+                done
+                echo ""
+              fi
+              
+              if [ -n "$DELTA_FAILED_TASKS" ]; then
+                echo "**🟡 Delta Branch Failed Tasks:**"
+                IFS='|' read -ra failed_tasks <<< "$DELTA_FAILED_TASKS"
+                for task in "${failed_tasks[@]}"; do
+                  echo "- $task"
+                done
+              fi
             fi
           } >> $GITHUB_STEP_SUMMARY
 
