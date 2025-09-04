@@ -54,7 +54,7 @@ jobs:
             local status="$1"
             local output_file="$2"
             
-            echo "📡 Fetching $status tasks from ClickUp API..."
+            echo "📡 Fetching $status tasks from ClickUp API..." >&2
             
             local http_code
             http_code=$(curl -w "%{http_code}" -s --max-time 30 \
@@ -64,18 +64,18 @@ jobs:
               "https://api.clickup.com/api/v2/list/$CLICKUP_LIST_ID/task?statuses[]=$status")
             
             if [ "$http_code" != "200" ]; then
-              echo "::error::❌ ClickUp API request failed with HTTP status: $http_code"
-              [ -f "$output_file" ] && cat "$output_file"
+              echo "::error::❌ ClickUp API request failed with HTTP status: $http_code" >&2
+              [ -f "$output_file" ] && cat "$output_file" >&2
               return 1
             fi
             
             if ! jq empty "$output_file" 2>/dev/null; then
-              echo "::error::❌ Invalid JSON response from ClickUp API"
-              cat "$output_file"
+              echo "::error::❌ Invalid JSON response from ClickUp API" >&2
+              cat "$output_file" >&2
               return 1
             fi
             
-            echo "✅ Successfully fetched $status tasks"
+            echo "✅ Successfully fetched $status tasks" >&2
             return 0
           }
 
@@ -106,38 +106,38 @@ jobs:
             local branch_name="$2"
             local task_type="$3"
             
-            echo "📦 Processing $task_type task: $task_name"
-            echo "   Branch: $branch_name"
+            echo "📦 Processing $task_type task: $task_name" >&2
+            echo "   Branch: $branch_name" >&2
             
             # Check if branch exists remotely
             if ! git ls-remote --exit-code --heads origin "$branch_name" >/dev/null 2>&1; then
-              echo "❌ Branch $branch_name not found remotely"
-              echo "::warning::Branch not found for $task_type task: $task_name"
+              echo "❌ Branch $branch_name not found remotely" >&2
+              echo "::warning::Branch not found for $task_type task: $task_name" >&2
               return 1
             fi
             
-            echo "✅ Branch exists remotely"
+            echo "✅ Branch exists remotely" >&2
             
             # Fetch the latest version
             if ! git fetch origin "$branch_name" 2>/dev/null; then
-              echo "❌ Failed to fetch branch $branch_name"
+              echo "❌ Failed to fetch branch $branch_name" >&2
               return 1
             fi
             
-            echo "📥 Fetched latest version"
+            echo "📥 Fetched latest version" >&2
             
             # Check if there are changes to merge
             if ! git merge-tree $(git merge-base HEAD "origin/$branch_name") HEAD "origin/$branch_name" | grep -q .; then
-              echo "ℹ️ No changes to merge (already up to date)"
+              echo "ℹ️ No changes to merge (already up to date)" >&2
               return 0
             fi
             
-            echo "🔄 Changes detected, performing squash merge..."
+            echo "🔄 Changes detected, performing squash merge..." >&2
             
             # Perform squash merge
             if ! git merge "origin/$branch_name" --squash --no-edit; then
-              echo "❌ Merge conflict detected for $task_type $branch_name"
-              echo "::error::Merge conflict detected for $task_type task: $task_name (branch: $branch_name)"
+              echo "❌ Merge conflict detected for $task_type $branch_name" >&2
+              echo "::error::Merge conflict detected for $task_type task: $task_name (branch: $branch_name)" >&2
               cleanup_git
               return 1
             fi
@@ -145,15 +145,15 @@ jobs:
             # Check if there are changes to commit
             if ! git diff --cached --quiet; then
               if git commit -m "feat: merge $task_type $branch_name"; then
-                echo "✅ Successfully squash merged $task_type $branch_name"
+                echo "✅ Successfully squash merged $task_type $branch_name" >&2
                 return 0
               else
-                echo "❌ Failed to commit squash merge for $task_type $branch_name"
+                echo "❌ Failed to commit squash merge for $task_type $branch_name" >&2
                 cleanup_git
                 return 1
               fi
             else
-              echo "ℹ️ No changes to commit (already up to date)"
+              echo "ℹ️ No changes to commit (already up to date)" >&2
               return 0
             fi
           }
@@ -165,7 +165,7 @@ jobs:
             local target_branch="$3"
             
             if [ -z "$task_data" ]; then
-              echo "ℹ️ No $task_type tasks found for $REPOSITORY_NAME repository"
+              echo "ℹ️ No $task_type tasks found for $REPOSITORY_NAME repository" >&2
               echo "0:0:0"
               return 0
             fi
@@ -174,16 +174,16 @@ jobs:
             total_tasks=$(echo "$task_data" | wc -l)
             local failed_tasks=()
             
-            echo "🎯 Found $total_tasks $task_type tasks for $REPOSITORY_NAME:"
+            echo "🎯 Found $total_tasks $task_type tasks for $REPOSITORY_NAME:" >&2
             while IFS=$'\t' read -r task_name branch_name task_id; do
-              echo "  📋 $task_name (Branch: $branch_name)"
+              echo "  📋 $task_name (Branch: $branch_name)" >&2
             done <<< "$task_data"
             
-            echo "🚀 Starting $task_type merge process for $total_tasks tasks..."
+            echo "🚀 Starting $task_type merge process for $total_tasks tasks..." >&2
             
             # Ensure we're on the correct branch
             if ! git checkout "$target_branch"; then
-              echo "::error::❌ Failed to checkout $task_type branch $target_branch"
+              echo "::error::❌ Failed to checkout $task_type branch $target_branch" >&2
               return 1
             fi
             
@@ -199,33 +199,33 @@ jobs:
             done <<< "$task_data"
             
             # Generate summary
-            echo "📊 $task_type Merge Summary:"
-            echo "   Total tasks: $total_tasks"
-            echo "   Successfully merged: $merged_count"
-            echo "   Failed: ${#failed_tasks[@]}"
+            echo "📊 $task_type Merge Summary:" >&2
+            echo "   Total tasks: $total_tasks" >&2
+            echo "   Successfully merged: $merged_count" >&2
+            echo "   Failed: ${#failed_tasks[@]}" >&2
             
             # Report failed tasks
             if [ ${#failed_tasks[@]} -gt 0 ]; then
-              echo "❌ Failed $task_type tasks:"
+              echo "❌ Failed $task_type tasks:" >&2
               for task in "${failed_tasks[@]}"; do
-                echo "   $task"
+                echo "   $task" >&2
               done
             fi
             
             # Push changes if successful merges
             if [ $merged_count -gt 0 ]; then
-              echo "📤 Pushing $merged_count successful $task_type merges..."
+              echo "📤 Pushing $merged_count successful $task_type merges..." >&2
               if git push origin "$target_branch"; then
-                echo "✅ Successfully pushed all $task_type changes"
+                echo "✅ Successfully pushed all $task_type changes" >&2
               else
-                echo "::error::❌ Failed to push $task_type changes"
+                echo "::error::❌ Failed to push $task_type changes" >&2
                 return 1
               fi
             else
-              echo "⚠️ No $task_type changes to push"
+              echo "⚠️ No $task_type changes to push" >&2
             fi
             
-            # Return results
+            # Return results - this is the only stdout output
             echo "$merged_count:$total_tasks:${#failed_tasks[@]}"
           }
           FUNCTIONS
