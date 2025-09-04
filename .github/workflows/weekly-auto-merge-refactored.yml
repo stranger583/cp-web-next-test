@@ -119,7 +119,7 @@ jobs:
             echo "✅ Branch exists remotely" >&2
             
             # Fetch the latest version
-            if ! git fetch origin "$branch_name" 2>/dev/null; then
+            if ! git fetch origin "$branch_name" >/dev/null 2>&1; then
               echo "❌ Failed to fetch branch $branch_name" >&2
               return 1
             fi
@@ -134,8 +134,8 @@ jobs:
             
             echo "🔄 Changes detected, performing squash merge..." >&2
             
-            # Perform squash merge
-            if ! git merge "origin/$branch_name" --squash --no-edit; then
+            # Perform squash merge (redirect all output to stderr)
+            if ! git merge "origin/$branch_name" --squash --no-edit >/dev/null 2>&1; then
               echo "❌ Merge conflict detected for $task_type $branch_name" >&2
               echo "::error::Merge conflict detected for $task_type task: $task_name (branch: $branch_name)" >&2
               cleanup_git
@@ -144,7 +144,7 @@ jobs:
             
             # Check if there are changes to commit
             if ! git diff --cached --quiet; then
-              if git commit -m "feat: merge $task_type $branch_name"; then
+              if git commit -m "feat: merge $task_type $branch_name" >/dev/null 2>&1; then
                 echo "✅ Successfully squash merged $task_type $branch_name" >&2
                 return 0
               else
@@ -182,7 +182,7 @@ jobs:
             echo "🚀 Starting $task_type merge process for $total_tasks tasks..." >&2
             
             # Ensure we're on the correct branch
-            if ! git checkout "$target_branch"; then
+            if ! git checkout "$target_branch" >/dev/null 2>&1; then
               echo "::error::❌ Failed to checkout $task_type branch $target_branch" >&2
               return 1
             fi
@@ -215,7 +215,7 @@ jobs:
             # Push changes if successful merges
             if [ $merged_count -gt 0 ]; then
               echo "📤 Pushing $merged_count successful $task_type merges..." >&2
-              if git push origin "$target_branch"; then
+              if git push origin "$target_branch" >/dev/null 2>&1; then
                 echo "✅ Successfully pushed all $task_type changes" >&2
               else
                 echo "::error::❌ Failed to push $task_type changes" >&2
@@ -225,7 +225,7 @@ jobs:
               echo "⚠️ No $task_type changes to push" >&2
             fi
             
-            # Return results - this is the only stdout output
+            # Return results - this is the only stdout output (critical fix!)
             echo "$merged_count:$total_tasks:${#failed_tasks[@]}"
           }
           FUNCTIONS
@@ -237,7 +237,7 @@ jobs:
         run: |
           echo "📅 Creating beta branch: $BETA_BRANCH"
 
-          if git ls-remote --exit-code --heads origin $BETA_BRANCH; then
+          if git ls-remote --exit-code --heads origin $BETA_BRANCH >/dev/null 2>&1; then
             echo "⚠️ Beta branch $BETA_BRANCH already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
           else
@@ -292,9 +292,9 @@ jobs:
             exit 0
           fi
 
-          # Process beta tasks
+          # Process beta tasks - CRITICAL FIX: Capture only the final result line
           echo "🔍 Debug: Calling process_tasks with: '$BETA_TASK_DATA'"
-          BETA_RESULT=$(process_tasks "$BETA_TASK_DATA" "beta" "$BETA_BRANCH")
+          BETA_RESULT=$(process_tasks "$BETA_TASK_DATA" "beta" "$BETA_BRANCH" | tail -1)
           echo "🔍 Debug: BETA_RESULT = '$BETA_RESULT'"
 
           # Parse results
@@ -304,6 +304,14 @@ jobs:
           # Validate parsed values
           if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
             echo "❌ Error: Failed to parse BETA_RESULT properly"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Additional validation: ensure values are numeric
+          if ! [[ "$merged_count" =~ ^[0-9]+$ ]] || ! [[ "$total_tasks" =~ ^[0-9]+$ ]] || ! [[ "$failed_count" =~ ^[0-9]+$ ]]; then
+            echo "❌ Error: Parsed values are not numeric"
             echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
             echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
@@ -337,7 +345,7 @@ jobs:
           echo "   Source branch: $BETA_BRANCH"
           echo "   Delta branch: $DELTA_BRANCH"
 
-          if git ls-remote --exit-code --heads origin $DELTA_BRANCH; then
+          if git ls-remote --exit-code --heads origin $DELTA_BRANCH >/dev/null 2>&1; then
             echo "⚠️ Delta branch $DELTA_BRANCH already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
             echo "branch_created=false" >> $GITHUB_OUTPUT
@@ -375,7 +383,7 @@ jobs:
         run: |
           source /tmp/common_functions.sh
 
-                    echo "🚀 Starting delta task processing..."
+          echo "🚀 Starting delta task processing..."
 
           # Get DELTA_BRANCH from environment
           DELTA_BRANCH="${{ env.DELTA_BRANCH }}"
@@ -417,9 +425,9 @@ jobs:
             exit 0
           fi
 
-          # Process delta tasks
+          # Process delta tasks - CRITICAL FIX: Capture only the final result line
           echo "🔍 Debug: Calling process_tasks with: '$DELTA_TASK_DATA'"
-          DELTA_RESULT=$(process_tasks "$DELTA_TASK_DATA" "delta" "$DELTA_BRANCH_NAME")
+          DELTA_RESULT=$(process_tasks "$DELTA_TASK_DATA" "delta" "$DELTA_BRANCH_NAME" | tail -1)
           echo "🔍 Debug: DELTA_RESULT = '$DELTA_RESULT'"
 
           # Parse results
@@ -429,6 +437,14 @@ jobs:
           # Validate parsed values
           if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
             echo "❌ Error: Failed to parse DELTA_RESULT properly"
+            echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
+            echo "process_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+          # Additional validation: ensure values are numeric
+          if ! [[ "$merged_count" =~ ^[0-9]+$ ]] || ! [[ "$total_tasks" =~ ^[0-9]+$ ]] || ! [[ "$failed_count" =~ ^[0-9]+$ ]]; then
+            echo "❌ Error: Parsed values are not numeric"
             echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
             echo "process_success=false" >> $GITHUB_OUTPUT
             exit 1
