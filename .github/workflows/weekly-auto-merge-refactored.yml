@@ -48,8 +48,13 @@ jobs:
           echo "📅 Beta branch: $BETA_BRANCH"
           echo "📅 Delta branch: $DELTA_BRANCH"
 
+          # Create unique temporary directory for this workflow run
+          TEMP_DIR="/tmp/github_actions_$$_$(date +%s)"
+          mkdir -p "$TEMP_DIR"
+          echo "TEMP_DIR=$TEMP_DIR" >> $GITHUB_ENV
+
           # Common functions
-          cat << 'FUNCTIONS' > /tmp/common_functions.sh
+          cat << 'FUNCTIONS' > "$TEMP_DIR/common_functions.sh"
 
           # Fetch tasks from ClickUp API
           fetch_clickup_tasks() {
@@ -78,12 +83,16 @@ jobs:
             if [ "$http_code" != "200" ]; then
               echo "::error::❌ ClickUp API request failed with HTTP status: $http_code" >&2
               [ -f "$output_file" ] && cat "$output_file" >&2
+              # Clean up the failed response file
+              rm -f "$output_file" 2>/dev/null || true
               return 1
             fi
             
             if ! jq empty "$output_file" 2>/dev/null; then
               echo "::error::❌ Invalid JSON response from ClickUp API" >&2
               cat "$output_file" >&2
+              # Clean up the invalid response file
+              rm -f "$output_file" 2>/dev/null || true
               return 1
             fi
             
@@ -106,19 +115,66 @@ jobs:
             \"\(.name)\t\(\$branch)\t\(.id)\"" "$input_file" | sort
           }
 
-          # Clean up git state
+          # Enhanced cleanup function with comprehensive error handling
           cleanup_git() {
+            echo "🧹 Starting git cleanup..." >&2
+            
+            # Abort any ongoing merge
             if git merge --abort 2>/dev/null; then
-              echo "✅ Aborted merge successfully"
+              echo "✅ Aborted merge successfully" >&2
             else
-              echo "ℹ️ No merge to abort"
+              echo "ℹ️ No merge to abort" >&2
             fi
             
-            if git clean -fd 2>/dev/null; then
-              echo "✅ Cleaned untracked files"
+            # Reset to clean state
+            if git reset --hard HEAD 2>/dev/null; then
+              echo "✅ Reset to clean state" >&2
             else
-              echo "ℹ️ No files to clean"
+              echo "⚠️ Failed to reset git state" >&2
             fi
+            
+            # Clean untracked files
+            if git clean -fd 2>/dev/null; then
+              echo "✅ Cleaned untracked files" >&2
+            else
+              echo "ℹ️ No files to clean" >&2
+            fi
+            
+            # Ensure we're on the correct branch
+            if [ -n "$TARGET_BRANCH" ]; then
+              if git checkout "$TARGET_BRANCH" 2>/dev/null; then
+                echo "✅ Switched back to $TARGET_BRANCH" >&2
+              else
+                echo "⚠️ Failed to checkout $TARGET_BRANCH" >&2
+              fi
+            fi
+          }
+
+          # Comprehensive cleanup and exit function
+          cleanup_and_exit() {
+            local exit_code="${1:-1}"
+            local error_msg="${2:-Unknown error}"
+            
+            echo "🚨 Error occurred: $error_msg" >&2
+            echo "🧹 Performing comprehensive cleanup..." >&2
+            
+            # Clean up git state
+            cleanup_git
+            
+            # Clean up temporary files
+            if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+              rm -rf "$TEMP_DIR" 2>/dev/null || true
+              echo "✅ Cleaned temporary directory: $TEMP_DIR" >&2
+            fi
+            
+            # Clean up any remaining temp files
+            rm -f /tmp/clickup_*_response.json 2>/dev/null || true
+            
+            # Clear sensitive environment variables
+            unset CLICKUP_API_TOKEN 2>/dev/null || true
+            
+            echo "::error::$error_msg" >&2
+            exit "$exit_code"
           }
 
           # Merge a single task branch
@@ -258,7 +314,7 @@ jobs:
           process_task_type() {
             local task_type="$1"
             local branch_name="$2"
-            local response_file="/tmp/clickup_${task_type}_response.json"
+            local response_file="$TEMP_DIR/clickup_${task_type}_response.json"
             
             echo "🚀 Starting $task_type task processing..."
             echo "🔍 Debug: ${task_type^^}_BRANCH = '$branch_name'"
@@ -272,7 +328,7 @@ jobs:
               echo "all_tasks_merged=false" >> $GITHUB_OUTPUT
               echo "has_tasks=false" >> $GITHUB_OUTPUT
               rm -f "$response_file"
-              exit 1
+              cleanup_and_exit 1 "Failed to fetch $task_type tasks from ClickUp API"
             fi
             
             # Parse tasks
@@ -317,7 +373,7 @@ jobs:
               echo "❌ Error: Failed to parse ${task_type^^}_RESULT properly"
               echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
               echo "process_success=false" >> $GITHUB_OUTPUT
-              exit 1
+              cleanup_and_exit 1 "Failed to parse $task_type task results properly"
             fi
             
             # Additional validation: ensure values are numeric
@@ -325,7 +381,7 @@ jobs:
               echo "❌ Error: Parsed values are not numeric"
               echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
               echo "process_success=false" >> $GITHUB_OUTPUT
-              exit 1
+              cleanup_and_exit 1 "Parsed $task_type task values are not valid numbers"
             fi
             
             # Set outputs
@@ -356,12 +412,12 @@ jobs:
               fi
             } >> "$GITHUB_STEP_SUMMARY"
             
-            # Clean up
+            # Clean up response file
             rm -f "$response_file"
           }
           FUNCTIONS
 
-          source /tmp/common_functions.sh
+          source "$TEMP_DIR/common_functions.sh"
 
       - name: Create Beta Branch
         id: create_beta
@@ -383,7 +439,7 @@ jobs:
       - name: Process Beta Tasks
         id: process_beta
         run: |
-          source /tmp/common_functions.sh
+          source "$TEMP_DIR/common_functions.sh"
           # Pass branch name as environment variable to avoid context issues
           export TARGET_BRANCH="${{ env.BETA_BRANCH }}"
           process_task_type "beta" "$TARGET_BRANCH"
@@ -432,7 +488,7 @@ jobs:
         id: process_delta
         if: steps.create_delta.outputs.branch_created == 'true' || steps.create_delta.outputs.branch_exists == 'true'
         run: |
-          source /tmp/common_functions.sh
+          source "$TEMP_DIR/common_functions.sh"
           # Use consistent branch name from step output
           export TARGET_BRANCH="${{ steps.create_delta.outputs.branch_name }}"
           process_task_type "delta" "$TARGET_BRANCH"
@@ -527,7 +583,10 @@ jobs:
           } >> $GITHUB_STEP_SUMMARY
 
           # Clean up temporary files
-          rm -f /tmp/common_functions.sh
+          if [ -n "$TEMP_DIR" ] && [ -d "$TEMP_DIR" ]; then
+            rm -rf "$TEMP_DIR"
+            echo "✅ Cleaned up temporary directory: $TEMP_DIR"
+          fi
 
           # Determine final exit code
           BETA_SUCCESS="${{ steps.process_beta.outputs.process_success }}"
