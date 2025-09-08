@@ -280,7 +280,7 @@ jobs:
             echo "merged_count=0" >> $GITHUB_OUTPUT
             echo "total_tasks=0" >> $GITHUB_OUTPUT
             echo "failed_count=0" >> $GITHUB_OUTPUT
-            echo "all_tasks_merged=false" >> $GITHUB_OUTPUT
+            echo "all_tasks_merged=true" >> $GITHUB_OUTPUT
             echo "process_success=true" >> $GITHUB_OUTPUT
             echo "has_tasks=false" >> $GITHUB_OUTPUT
             
@@ -354,7 +354,7 @@ jobs:
 
       - name: Create Delta Branch
         id: create_delta
-        if: steps.process_beta.outputs.all_tasks_merged == 'true'
+        if: steps.process_beta.outputs.process_success == 'true' && (steps.process_beta.outputs.all_tasks_merged == 'true' || steps.process_beta.outputs.has_tasks == 'false')
         run: |
           echo "🎉 All beta tasks successfully merged! Creating delta branch..."
           echo "   Source branch: $BETA_BRANCH"
