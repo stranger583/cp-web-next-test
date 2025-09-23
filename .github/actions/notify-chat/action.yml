@@ -36,19 +36,40 @@ inputs:
 runs:
   using: "composite"
   steps:
-    - name: Send Notification
-      uses: SimonScholz/google-chat-action@main
-      with:
-        webhook_url: ${{ inputs.url }}
-        message: |
-          ${{ inputs.type == 'success' && '✅' || inputs.type == 'error' && '❌' || '✅' }} **${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} ${{ inputs.type == 'success' && 'Merge Success' || inputs.type == 'error' && 'Tasks Processing Failed' || 'Move Tag Success' }}**
+    - name: Send Google Chat Notification
+      shell: bash
+      run: |
+        # 準備訊息內容
+        if [ "${{ inputs.type }}" = "success" ]; then
+          EMOJI="✅"
+          TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Merge Success"
+          DESCRIPTION="${{ inputs.branch_type }} tasks have been successfully merged."
+          ADDITIONAL_INFO="**Tasks Merged:** ${{ inputs.merged_count }}/${{ inputs.total_tasks }}
+        **Tag Moved:** ${{ inputs.tag_moved }}"
+        elif [ "${{ inputs.type }}" = "error" ]; then
+          EMOJI="❌"
+          TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Tasks Processing Failed"
+          DESCRIPTION="${{ inputs.branch_type }} task processing has failed. Please check the workflow logs for details."
+          ADDITIONAL_INFO="**Failed Tasks:** ${{ inputs.failed_tasks }}"
+        else
+          EMOJI="✅"
+          TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Move Tag Success"
+          DESCRIPTION="${{ inputs.branch_type }} tag has been successfully moved to current commit."
+          ADDITIONAL_INFO="**Tag:** ${{ inputs.branch_type }}
+        **Tasks Merged:** ${{ inputs.merged_count }}/${{ inputs.total_tasks }}"
+        fi
 
-          ${{ inputs.type == 'success' && format('{0} tasks have been successfully merged.', inputs.branch_type) || inputs.type == 'error' && format('{0} task processing has failed. Please check the workflow logs for details.', inputs.branch_type) || format('{0} tag has been successfully moved to current commit.', inputs.branch_type) }}
+        # 構建完整訊息
+        MESSAGE="${EMOJI} **${TITLE}**
 
-          **Repository:** ${{ env.REPOSITORY_NAME }}
-          **Branch:** ${{ inputs.branch_name }}
-          ${{ inputs.type == 'success' && format('**Tasks Merged:** {0}/{1}', inputs.merged_count, inputs.total_tasks) || '' }}
-          ${{ inputs.type == 'success' && format('**Tag Moved:** {0}', inputs.tag_moved) || '' }}
-          ${{ inputs.type == 'error' && format('**Failed Tasks:** {0}', inputs.failed_tasks) || '' }}
-          ${{ inputs.type == 'tag_success' && format('**Tag:** {0}', inputs.branch_type) || '' }}
-          ${{ inputs.type == 'tag_success' && format('**Tasks Merged:** {0}/{1}', inputs.merged_count, inputs.total_tasks) || '' }}
+        ${DESCRIPTION}
+
+        **Repository:** ${GITHUB_REPOSITORY}
+        **Branch:** ${{ inputs.branch_name }}
+        ${ADDITIONAL_INFO}"
+
+        # 發送到 Google Chat
+        curl -X POST \
+          -H 'Content-Type: application/json' \
+          -d "{\"text\": \"${MESSAGE}\"}" \
+          "${{ inputs.url }}"
