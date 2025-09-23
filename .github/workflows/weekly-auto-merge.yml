@@ -158,6 +158,36 @@ jobs:
             fi
           }
 
+          # Move tag function
+          move_tag_if_successful() {
+            local merged_count="$1"
+            local failed_count="$2"
+            local tag_name="$3"
+            local branch_name="$4"
+            local step_name="$5"
+            
+            if [ $failed_count -eq 0 ] && [ $merged_count -gt 0 ]; then
+              echo "🏷️ Moving $tag_name tag to current commit..."
+              if yarn move-tag "$tag_name"; then
+                echo "✅ Successfully moved $tag_name tag"
+                echo "${step_name}_tag_moved=true" >> $GITHUB_OUTPUT
+                
+                {
+                  echo "### 🏷️ $step_name Tag Movement"
+                  echo "- **Tag:** \`$tag_name\`"
+                  echo "- **Status:** ✅ Successfully moved to current commit"
+                  echo "- **Branch:** \`$branch_name\`"
+                } >> $GITHUB_STEP_SUMMARY
+              else
+                echo "❌ Failed to move $tag_name tag"
+                echo "${step_name}_tag_moved=false" >> $GITHUB_OUTPUT
+              fi
+            else
+              echo "⚠️ Skipping $tag_name tag movement (errors: $failed_count, merged: $merged_count)"
+              echo "${step_name}_tag_moved=false" >> $GITHUB_OUTPUT
+            fi
+          }
+
           # Process multiple tasks
           process_tasks() {
             local task_data="$1"
@@ -224,6 +254,7 @@ jobs:
             else
               echo "⚠️ No $task_type changes to push" >&2
             fi
+            
             
             # Return results - now includes failed task names
             local failed_tasks_str=""
@@ -348,6 +379,9 @@ jobs:
               done
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+          # Move beta tag if no errors and at least one merge
+          move_tag_if_successful "$merged_count" "$failed_count" "beta" "$BETA_BRANCH" "beta"
 
           # Clean up
           rm -f /tmp/clickup_beta_response.json
@@ -493,6 +527,9 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+          # Move delta tag if no errors and at least one merge
+          move_tag_if_successful "$merged_count" "$failed_count" "delta" "$DELTA_BRANCH_NAME" "delta"
+
           # Clean up
           rm -f /tmp/clickup_delta_response.json
 
@@ -513,11 +550,21 @@ jobs:
           DELTA_TOTAL="${{ steps.process_delta.outputs.total_tasks }}"
           DELTA_FAILED_TASKS="${{ steps.process_delta.outputs.failed_tasks_str }}"
 
+          # Tag movement status from individual steps
+          BETA_TAG_MOVED="${{ steps.process_beta.outputs.beta_tag_moved }}"
+          DELTA_TAG_MOVED="${{ steps.process_delta.outputs.delta_tag_moved }}"
+
           echo "📋 Final Status Summary:"
-          echo "   Beta branch: $BETA_BRANCH"
-          echo "   Delta branch: $DELTA_BRANCH"
-          echo "   Beta tasks: $BETA_MERGED/$BETA_TOTAL"
-          echo "   Delta tasks: $DELTA_MERGED/$DELTA_TOTAL"
+            echo "   Beta branch: $BETA_BRANCH"
+            echo "   Delta branch: $DELTA_BRANCH"
+            echo "   Beta tasks: $BETA_MERGED/$BETA_TOTAL"
+            echo "   Delta tasks: $DELTA_MERGED/$DELTA_TOTAL"
+            if [ "$BETA_TAG_MOVED" = "true" ]; then
+              echo "   Beta tag moved: beta"
+            fi
+            if [ "$DELTA_TAG_MOVED" = "true" ]; then
+              echo "   Delta tag moved: delta"
+            fi
 
           # Generate comprehensive summary
           {
@@ -529,6 +576,13 @@ jobs:
               echo "**🟡 Delta Branch:** \`$DELTA_BRANCH\`"
             fi
             
+            if [ "$BETA_TAG_MOVED" = "true" ]; then
+              echo "**🏷️ Beta Tag:** \`beta\` (moved to current commit)"
+            fi
+            if [ "$DELTA_TAG_MOVED" = "true" ]; then
+              echo "**🏷️ Delta Tag:** \`delta\` (moved to current commit)"
+            fi
+            
             echo ""
             
             # Determine overall status
@@ -536,6 +590,12 @@ jobs:
               echo "✅ **Status:** No tasks to process (normal situation)"
             elif [ "$BETA_ALL_MERGED" = "true" ] && [ "$DELTA_CREATED" = "true" ]; then
               echo "🎉 **Status:** Perfect! All beta tasks merged, delta branch created"
+              if [ "$BETA_TAG_MOVED" = "true" ]; then
+                echo "🏷️ **Beta Tag:** \`beta\` tag moved to current commit"
+              fi
+              if [ "$DELTA_TAG_MOVED" = "true" ]; then
+                echo "🏷️ **Delta Tag:** \`delta\` tag moved to current commit"
+              fi
               if [ "$DELTA_HAS_TASKS" = "true" ]; then
                 echo "🚀 **Bonus:** Delta tasks also processed ($DELTA_MERGED/$DELTA_TOTAL)"
               fi
