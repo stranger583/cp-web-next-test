@@ -37,7 +37,7 @@ runs:
   using: "composite"
   steps:
     - name: Send Notification
-      uses: google-chat-notification@v1
+      uses: SimonScholz/google-chat-action@main
       with:
         webhook_url: ${{ inputs.url }}
         message: |
