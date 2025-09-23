@@ -34,26 +34,58 @@ jobs:
         with:
           branch_type: "delta"
 
+      - name: Find Beta Branch
+        id: find_beta
+        run: |
+          # Get current week info
+          YEAR=$(date +'%y')
+          WEEK=$(date +'%V')
+          BETA_BRANCH="beta/sprint-${YEAR}${WEEK}-auto"
+          
+          echo "🔍 Looking for beta branch: $BETA_BRANCH"
+          
+          if git ls-remote --exit-code --heads origin $BETA_BRANCH >/dev/null 2>&1; then
+            echo "✅ Found beta branch: $BETA_BRANCH"
+            echo "beta_branch=$BETA_BRANCH" >> $GITHUB_OUTPUT
+            echo "beta_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Beta branch $BETA_BRANCH not found"
+            echo "beta_exists=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
       - name: Create Delta Branch
         id: create_delta
         run: |
           DELTA_BRANCH="${{ steps.setup.outputs.branch_name }}"
+          BETA_BRANCH="${{ steps.find_beta.outputs.beta_branch }}"
+          
           echo "📅 Creating delta branch: $DELTA_BRANCH"
+          echo "   From beta branch: $BETA_BRANCH"
 
           if git ls-remote --exit-code --heads origin $DELTA_BRANCH >/dev/null 2>&1; then
             echo "⚠️ Delta branch $DELTA_BRANCH already exists"
             echo "branch_exists=true" >> $GITHUB_OUTPUT
+            echo "branch_created=false" >> $GITHUB_OUTPUT
           else
-            echo "✨ Creating new delta branch: $DELTA_BRANCH"
+            echo "✨ Creating new delta branch from beta branch..."
+            
+            # Checkout to beta branch first
+            git checkout $BETA_BRANCH
+            git pull origin $BETA_BRANCH
+            
+            # Create delta branch from beta branch
             git checkout -b $DELTA_BRANCH
             git push origin $DELTA_BRANCH
             echo "branch_exists=false" >> $GITHUB_OUTPUT
+            echo "branch_created=true" >> $GITHUB_OUTPUT
           fi
 
           echo "branch_name=$DELTA_BRANCH" >> $GITHUB_OUTPUT
 
       - name: Process Delta Tasks
         id: process_delta
+        if: steps.find_beta.outputs.beta_exists == 'true'
         uses: ./.github/actions/clickup-tasks
         with:
           status: "delta"
@@ -61,7 +93,7 @@ jobs:
 
       - name: Move Delta Tag
         id: move_delta_tag
-        if: steps.process_delta.outputs.process_success == 'true'
+        if: steps.find_beta.outputs.beta_exists == 'true' && steps.process_delta.outputs.process_success == 'true'
         uses: ./.github/actions/move-tag
         with:
           merged_count: ${{ steps.process_delta.outputs.merged_count }}
@@ -71,7 +103,7 @@ jobs:
           step_name: "delta"
 
       - name: Notify Delta Move Tag Success
-        if: steps.move_delta_tag.outputs.tag_moved == 'true'
+        if: steps.find_beta.outputs.beta_exists == 'true' && steps.move_delta_tag.outputs.tag_moved == 'true'
         uses: ./.github/actions/notify-chat
         with:
           name: "Delta Move Tag Success"
@@ -83,7 +115,7 @@ jobs:
           total_tasks: ${{ steps.process_delta.outputs.total_tasks }}
 
       - name: Notify Delta Merge Success
-        if: steps.process_delta.outputs.process_success == 'true' && steps.process_delta.outputs.merged_count > 0
+        if: steps.find_beta.outputs.beta_exists == 'true' && steps.process_delta.outputs.process_success == 'true' && steps.process_delta.outputs.merged_count > 0
         uses: ./.github/actions/notify-chat
         with:
           name: "Delta Merge Success"
@@ -96,7 +128,7 @@ jobs:
           tag_moved: ${{ steps.move_delta_tag.outputs.tag_moved == 'true' && 'Yes (delta)' || 'No' }}
 
       - name: Notify Delta Merge Error
-        if: failure() && steps.process_delta.outputs.process_success == 'false'
+        if: steps.find_beta.outputs.beta_exists == 'true' && failure() && steps.process_delta.outputs.process_success == 'false'
         uses: ./.github/actions/notify-chat
         with:
           name: "Delta Merge Error"
@@ -109,6 +141,8 @@ jobs:
       - name: Generate Summary
         if: always()
         run: |
+          BETA_BRANCH="${{ steps.find_beta.outputs.beta_branch }}"
+          BETA_EXISTS="${{ steps.find_beta.outputs.beta_exists }}"
           DELTA_BRANCH="${{ steps.create_delta.outputs.branch_name }}"
           DELTA_MERGED="${{ steps.process_delta.outputs.merged_count }}"
           DELTA_TOTAL="${{ steps.process_delta.outputs.total_tasks }}"
@@ -116,7 +150,8 @@ jobs:
           DELTA_TAG_MOVED="${{ steps.move_delta_tag.outputs.tag_moved }}"
 
           echo "📋 Delta Status Summary:"
-          echo "   Branch: $DELTA_BRANCH"
+          echo "   Beta branch: $BETA_BRANCH (exists: $BETA_EXISTS)"
+          echo "   Delta branch: $DELTA_BRANCH"
           echo "   Tasks: $DELTA_MERGED/$DELTA_TOTAL"
           echo "   Failed: $DELTA_FAILED"
           if [ "$DELTA_TAG_MOVED" = "true" ]; then
@@ -126,6 +161,11 @@ jobs:
           {
             echo "## 📊 Delta Branch Summary"
             echo ""
+            if [ "$BETA_EXISTS" = "true" ]; then
+              echo "**🔵 Source Beta Branch:** \`$BETA_BRANCH\`"
+            else
+              echo "**❌ Beta Branch:** Not found"
+            fi
             echo "**🟡 Delta Branch:** \`$DELTA_BRANCH\`"
             echo "**📈 Tasks:** $DELTA_MERGED/$DELTA_TOTAL merged"
             echo "**❌ Failed:** $DELTA_FAILED"
