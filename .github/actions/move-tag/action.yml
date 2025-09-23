@@ -28,7 +28,7 @@ runs:
       id: move
       shell: bash
       run: |
-        if [ ${{ inputs.merged_count }} -eq 0 ] && [ ${{ inputs.failed_count }} -gt 0 ]; then
+        if [ ${{ inputs.failed_count }} -gt 0 ]; then
           echo "⚠️ Skipping ${{ inputs.tag_name }} tag movement (errors: ${{ inputs.failed_count }}, merged: ${{ inputs.merged_count }})"
           echo "tag_moved=false" >> $GITHUB_OUTPUT
         elif [ ${{ inputs.merged_count }} -gt 0 ]; then
