@@ -37,7 +37,7 @@ runs:
   using: "composite"
   steps:
     - name: Send Notification
-      uses: Co-qn/google-chat-action@v2
+      uses: Co-qn/google-chat-action@v1
       with:
         name: ${{ inputs.name }}
         url: ${{ inputs.url }}
