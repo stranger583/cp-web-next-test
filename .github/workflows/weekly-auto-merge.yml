@@ -158,6 +158,7 @@ jobs:
             fi
           }
 
+
           # Move tag function
           move_tag_if_successful() {
             local merged_count="$1"
@@ -340,7 +341,7 @@ jobs:
           if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
             echo "❌ Error: Failed to parse BETA_RESULT properly"
             echo "🔍 Debug: merged_count='$merged_count', total_tasks='$total_tasks', failed_count='$failed_count'"
-            echo "process_success=false" >> $GITHUB_OUTPUT
+            echo "process_success=false" >> $GITHUB_OUTPUT        
             exit 1
           fi
 
@@ -385,6 +386,29 @@ jobs:
 
           # Clean up
           rm -f /tmp/clickup_beta_response.json
+
+      - name: Notify Beta Move Tag Success
+        if: steps.process_beta.outputs.beta_tag_moved == 'true'
+        uses: ./.github/actions/notify-chat
+        with:
+          name: "Beta Move Tag Success"
+          url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          type: "tag_success"
+          branch_type: "beta"
+          branch_name: ${{ env.BETA_BRANCH }}
+          merged_count: ${{ steps.process_beta.outputs.merged_count }}
+          total_tasks: ${{ steps.process_beta.outputs.total_tasks }}
+
+      - name: Notify Beta Merge Error
+        if: failure() && steps.process_beta.outputs.process_success == 'false'
+        uses: ./.github/actions/notify-chat
+        with:
+          name: "Beta Merge Error"
+          url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          type: "error"
+          branch_type: "beta"
+          branch_name: ${{ env.BETA_BRANCH }}
+          failed_tasks: ${{ steps.process_beta.outputs.failed_tasks_str }}
 
       - name: Create Delta Branch
         id: create_delta
@@ -533,6 +557,30 @@ jobs:
           # Clean up
           rm -f /tmp/clickup_delta_response.json
 
+      - name: Notify Delta Merge Error
+        if: failure() && steps.process_delta.outputs.process_success == 'false'
+        uses: ./.github/actions/notify-chat
+        with:
+          name: "Delta Merge Error"
+          url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          type: "error"
+          branch_type: "delta"
+          branch_name: ${{ steps.create_delta.outputs.branch_name }}
+          failed_tasks: ${{ steps.process_delta.outputs.failed_tasks_str }}
+
+      - name: Notify Delta Merge Success
+        if: steps.process_delta.outputs.process_success == 'true' && steps.process_delta.outputs.merged_count > 0
+        uses: ./.github/actions/notify-chat
+        with:
+          name: "Delta Merge Success"
+          url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
+          type: "success"
+          branch_type: "delta"
+          branch_name: ${{ steps.create_delta.outputs.branch_name }}
+          merged_count: ${{ steps.process_delta.outputs.merged_count }}
+          total_tasks: ${{ steps.process_delta.outputs.total_tasks }}
+          tag_moved: ${{ steps.process_delta.outputs.delta_tag_moved == 'true' && 'Yes (delta)' || 'No' }}
+
       - name: Generate Final Summary
         if: always()
         run: |
@@ -653,10 +701,10 @@ jobs:
           DELTA_SUCCESS="${{ steps.process_delta.outputs.process_success }}"
 
           if [ "$BETA_HAS_TASKS" = "true" ] && [ "$BETA_SUCCESS" = "false" ]; then
-            echo "::error::❌ Beta task processing failed"
+            echo "::error::❌ Beta task processing failed"         
             exit 1
           elif [ "$DELTA_HAS_TASKS" = "true" ] && [ "$DELTA_SUCCESS" = "false" ]; then
-            echo "::error::❌ Delta task processing failed"
+            echo "::error::❌ Delta task processing failed"       
             exit 1
           else
             echo "✅ Workflow completed successfully"

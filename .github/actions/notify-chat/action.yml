@@ -1,0 +1,55 @@
+name: "Notify Google Chat"
+description: "Send notification to Google Chat with standardized format"
+inputs:
+  name:
+    description: "Notification name"
+    required: true
+  url:
+    description: "Google Chat webhook URL"
+    required: true
+  type:
+    description: "Notification type (success, error, tag_success)"
+    required: true
+  branch_type:
+    description: "Branch type (beta, delta)"
+    required: true
+  branch_name:
+    description: "Branch name"
+    required: true
+  merged_count:
+    description: "Number of merged tasks"
+    required: false
+    default: "0"
+  total_tasks:
+    description: "Total number of tasks"
+    required: false
+    default: "0"
+  failed_tasks:
+    description: "Failed tasks list"
+    required: false
+    default: ""
+  tag_moved:
+    description: "Whether tag was moved"
+    required: false
+    default: "No"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Send Notification
+      uses: Co-qn/google-chat-action@v2
+      with:
+        name: ${{ inputs.name }}
+        url: ${{ inputs.url }}
+        message: |
+          ${{ inputs.type == 'success' && '✅' || inputs.type == 'error' && '❌' || '✅' }} **${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} ${{ inputs.type == 'success' && 'Merge Success' || inputs.type == 'error' && 'Tasks Processing Failed' || 'Move Tag Success' }}**
+
+          ${{ inputs.type == 'success' && format('{0} tasks have been successfully merged.', inputs.branch_type) || inputs.type == 'error' && format('{0} task processing has failed. Please check the workflow logs for details.', inputs.branch_type) || format('{0} tag has been successfully moved to current commit.', inputs.branch_type) }}
+
+          **Repository:** ${{ env.REPOSITORY_NAME }}
+          **Branch:** ${{ inputs.branch_name }}
+          ${{ inputs.type == 'success' && format('**Tasks Merged:** {0}/{1}', inputs.merged_count, inputs.total_tasks) || '' }}
+          ${{ inputs.type == 'success' && format('**Tag Moved:** {0}', inputs.tag_moved) || '' }}
+          ${{ inputs.type == 'error' && format('**Failed Tasks:** {0}', inputs.failed_tasks) || '' }}
+          ${{ inputs.type == 'tag_success' && format('**Tag:** {0}', inputs.branch_type) || '' }}
+          ${{ inputs.type == 'tag_success' && format('**Tasks Merged:** {0}/{1}', inputs.merged_count, inputs.total_tasks) || '' }}
