@@ -37,10 +37,9 @@ runs:
   using: "composite"
   steps:
     - name: Send Notification
-      uses: Co-qn/google-chat-notification@releases/v1
+      uses: google-chat-notification@v1
       with:
-        name: ${{ inputs.name }}
-        url: ${{ inputs.url }}
+        webhook_url: ${{ inputs.url }}
         message: |
           ${{ inputs.type == 'success' && '✅' || inputs.type == 'error' && '❌' || '✅' }} **${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} ${{ inputs.type == 'success' && 'Merge Success' || inputs.type == 'error' && 'Tasks Processing Failed' || 'Move Tag Success' }}**
 
