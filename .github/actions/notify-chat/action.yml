@@ -70,7 +70,7 @@ runs:
           # Add failed branches if available
           if [ -n "${{ inputs.failed_branches }}" ]; then
             FAILED_INFO="${FAILED_INFO}
-        **Problematic Branches:**"
+        *Problematic Branches:*"
             # Split failed branches and format as list
             IFS='|' read -ra branches <<< "${{ inputs.failed_branches }}"
             for branch in "${branches[@]}"; do
