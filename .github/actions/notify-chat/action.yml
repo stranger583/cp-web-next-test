@@ -45,61 +45,55 @@ runs:
       run: |
         # 準備訊息內容
         if [ "${{ inputs.type }}" = "success" ]; then
-          EMOJI="✅"
+          EMOJI="🟢"
           TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Merge Success"
-          DESCRIPTION="${{ inputs.branch_type }} tasks have been successfully merged."
-          ADDITIONAL_INFO="📁 **Repository:** ${GITHUB_REPOSITORY}
-        🌿 **Branch:** ${{ inputs.branch_name }}
-        📊 **Tasks Merged:** ${{ inputs.merged_count }}/${{ inputs.total_tasks }}
-        🏷️ **Tag Moved:** ${{ inputs.tag_moved }}"
+          ADDITIONAL_INFO="📁 *Repository:* \`${GITHUB_REPOSITORY}\`
+        🌿 *Branch:* \`${{ inputs.branch_name }}\`
+        📊 *Total ${{ inputs.branch_type }} tasks:* ${{ inputs.total_tasks }}
+        ✅ *Successfully merged:* ${{ inputs.merged_count }}
+        ❌ *Failed:* ${{ inputs.failed_count }}
+        🏷️ *Tag Moved:* ${{ inputs.tag_moved }}"
         elif [ "${{ inputs.type }}" = "error" ]; then
-          EMOJI="❌"
+          EMOJI="🔴"
           TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Tasks Processing Failed"
-          DESCRIPTION="${{ inputs.branch_type }} task processing has failed. Please check the workflow logs for details."
           
           # Build failed information
-          FAILED_INFO="📁 **Repository:** ${GITHUB_REPOSITORY}
-        🌿 **Branch:** ${{ inputs.branch_name }}"
+          FAILED_INFO="📁 *Repository:* \`${GITHUB_REPOSITORY}\`
+        🌿 *Branch:* \`${{ inputs.branch_name }}\`"
           
           # Add failed tasks if available
           if [ -n "${{ inputs.failed_tasks }}" ]; then
             FAILED_INFO="${FAILED_INFO}
-        ❌ *Failed Tasks:*"
+        🔴 *Failed Tasks:*"
             # Split failed tasks and format as list
             IFS='|' read -ra tasks <<< "${{ inputs.failed_tasks }}"
             for task in "${tasks[@]}"; do
-              FAILED_INFO="${FAILED_INFO}
+              # Extract task name and branch name
+              if [[ "$task" =~ ^(.+)\ \(([^)]+)\)$ ]]; then
+                task_name="${BASH_REMATCH[1]}"
+                branch_name="${BASH_REMATCH[2]}"
+                FAILED_INFO="${FAILED_INFO}
+        - ${task_name} \`(${branch_name})\`"
+              else
+                FAILED_INFO="${FAILED_INFO}
         - \`${task}\`"
+              fi
             done
           fi
-          
-          # Add failed branches if available
-          if [ -n "${{ inputs.failed_branches }}" ]; then
-            FAILED_INFO="${FAILED_INFO}
-        ⚠️ *Problematic Branches:*"
-            # Split failed branches and format as list
-            IFS='|' read -ra branches <<< "${{ inputs.failed_branches }}"
-            for branch in "${branches[@]}"; do
-              FAILED_INFO="${FAILED_INFO}
-        - \`${branch}\`"
-            done
-          fi
-          
           ADDITIONAL_INFO="$FAILED_INFO"
         else
-          EMOJI="✅"
+          EMOJI="🟢"
           TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Move Tag Success"
-          DESCRIPTION="${{ inputs.branch_type }} tag has been successfully moved to current commit."
-          ADDITIONAL_INFO="📁 **Repository:** ${GITHUB_REPOSITORY}
-        🌿 **Branch:** ${{ inputs.branch_name }}
-        🏷️ **Tag:** ${{ inputs.branch_type }}
-        📊 **Tasks Merged:** ${{ inputs.merged_count }}/${{ inputs.total_tasks }}"
+          ADDITIONAL_INFO="📁 *Repository:* \`${GITHUB_REPOSITORY}\`
+        🌿 *Branch:* \`${{ inputs.branch_name }}\`
+        🏷️ *Tag:* \`${{ inputs.branch_type }}\`
+        📊 *Total ${{ inputs.branch_type }} tasks:* ${{ inputs.total_tasks }}
+        ✅ *Successfully merged:* ${{ inputs.merged_count }}
+        ❌ *Failed:* ${{ inputs.failed_count }}"
         fi
 
         # 構建完整訊息
-        MESSAGE="${EMOJI} **${TITLE}**
-
-        ${DESCRIPTION}
+        MESSAGE="${EMOJI} *${TITLE}*
 
         ${ADDITIONAL_INFO}"
 
