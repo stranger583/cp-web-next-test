@@ -36,6 +36,10 @@ inputs:
     description: "Whether tag was moved"
     required: false
     default: "No"
+  failed_assignees:
+    description: "Failed tasks assignees to mention"
+    required: false
+    default: ""
 
 runs:
   using: "composite"
@@ -75,6 +79,14 @@ runs:
         - ${task}"
             done
           fi
+          
+          # Add assignee mentions if available
+          if [ -n "${{ inputs.failed_assignees }}" ]; then
+            FAILED_INFO="${FAILED_INFO}
+
+        👥 *Please check:* ${{ inputs.failed_assignees }}"
+          fi
+          
           ADDITIONAL_INFO="$FAILED_INFO"
         else
           EMOJI="🟢"

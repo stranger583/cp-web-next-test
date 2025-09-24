@@ -29,6 +29,9 @@ outputs:
   all_tasks_merged:
     description: "Whether all tasks were merged"
     value: ${{ steps.process.outputs.all_tasks_merged }}
+  failed_assignees:
+    description: "Failed tasks assignees for notification"
+    value: ${{ steps.process.outputs.failed_assignees }}
 
 runs:
   using: "composite"
@@ -70,7 +73,7 @@ runs:
           return 0
         }
 
-        # Parse tasks and return task-branch pairs
+        # Parse tasks and return task-branch-assignee pairs
         parse_tasks() {
           local input_file="$1"
           local status="$2"
@@ -82,7 +85,8 @@ runs:
           ) | 
           (.custom_fields[] | select(.name == \"Branch\") | .value) as \$branch |
           select(\$branch != null and \$branch != \"\") |
-          \"\(.name)\t\(\$branch)\t\(.id)\"" "$input_file" | sort
+          (.assignees[]?.username // \"unassigned\") as \$assignee |
+          \"\(.name)\t\(\$branch)\t\(.id)\t\(\$assignee)\"" "$input_file" | sort
         }
 
         # Clean up git state
@@ -164,10 +168,11 @@ runs:
           local total_tasks merged_count=0
           total_tasks=$(echo "$task_data" | wc -l)
           local failed_tasks=()
+          local failed_assignees=()
           
           echo "🎯 Found $total_tasks $task_type tasks for $REPOSITORY_NAME:" >&2
-          while IFS=$'\t' read -r task_name branch_name task_id; do
-            echo "  📋 $task_name (Branch: $branch_name)" >&2
+          while IFS=$'\t' read -r task_name branch_name task_id assignee; do
+            echo "  📋 $task_name (Branch: $branch_name, Assignee: $assignee)" >&2
           done <<< "$task_data"
           
           echo "🚀 Starting $task_type merge process for $total_tasks tasks..." >&2
@@ -179,12 +184,15 @@ runs:
           fi
           
           # Process each task using here-string to avoid subshell issues
-          while IFS=$'\t' read -r task_name branch_name task_id; do
+          while IFS=$'\t' read -r task_name branch_name task_id assignee; do
             if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
               if merge_task_branch "$task_name" "$branch_name" "$task_type"; then
                 merged_count=$((merged_count + 1))
               else
-                failed_tasks+=("$task_name ($branch_name)")
+                failed_tasks+=("$task_name ($branch_name) - @$assignee")
+                if [ "$assignee" != "unassigned" ]; then
+                  failed_assignees+=("$assignee")
+                fi
               fi
             fi
           done <<< "$task_data"
@@ -216,12 +224,18 @@ runs:
             echo "⚠️ No $task_type changes to push" >&2
           fi
           
-          # Return results - now includes failed task names
+          # Return results - now includes failed task names and assignees
           local failed_tasks_str=""
+          local failed_assignees_str=""
           if [ ${#failed_tasks[@]} -gt 0 ]; then
             failed_tasks_str=$(printf "%s|" "${failed_tasks[@]}" | sed 's/|$//')
           fi
-          echo "$merged_count:$total_tasks:${#failed_tasks[@]}:$failed_tasks_str"
+          if [ ${#failed_assignees[@]} -gt 0 ]; then
+            # Remove duplicates and create unique assignees list
+            local unique_assignees=($(printf "%s\n" "${failed_assignees[@]}" | sort -u))
+            failed_assignees_str=$(printf "@%s " "${unique_assignees[@]}" | sed 's/ $//')
+          fi
+          echo "$merged_count:$total_tasks:${#failed_tasks[@]}:$failed_tasks_str:$failed_assignees_str"
         }
         FUNCTIONS
 
@@ -264,7 +278,7 @@ runs:
         RESULT=$(process_tasks "$TASK_DATA" "${{ inputs.status }}" "${{ inputs.branch_name }}" | tail -1)
 
         # Parse results
-        IFS=':' read -r merged_count total_tasks failed_count failed_tasks_str <<< "$RESULT"
+        IFS=':' read -r merged_count total_tasks failed_count failed_tasks_str failed_assignees_str <<< "$RESULT"
 
         # Validate parsed values
         if [ -z "$merged_count" ] || [ -z "$total_tasks" ] || [ -z "$failed_count" ]; then
@@ -285,6 +299,7 @@ runs:
         echo "total_tasks=$total_tasks" >> $GITHUB_OUTPUT
         echo "failed_count=$failed_count" >> $GITHUB_OUTPUT
         echo "failed_tasks_str=$failed_tasks_str" >> $GITHUB_OUTPUT
+        echo "failed_assignees=$failed_assignees_str" >> $GITHUB_OUTPUT
         echo "all_tasks_merged=$([[ $merged_count -eq $total_tasks && $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
         echo "process_success=$([[ $failed_count -eq 0 || $merged_count -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
         echo "has_tasks=$([[ $total_tasks -gt 0 ]] && echo "true" || echo "false")" >> $GITHUB_OUTPUT
