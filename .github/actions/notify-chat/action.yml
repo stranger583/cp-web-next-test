@@ -47,7 +47,7 @@ runs:
     - name: Send Google Chat Notification
       shell: bash
       run: |
-        # 準備訊息內容
+        # 準備訊息內容 (測試快取是否存在)
         if [ "${{ inputs.type }}" = "success" ]; then
           EMOJI="🟢"
           TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Merge Success"
