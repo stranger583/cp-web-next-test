@@ -83,7 +83,7 @@ jobs:
           total_tasks: ${{ steps.process_beta.outputs.total_tasks }}
 
       - name: Notify Beta Merge Success
-        if: steps.process_beta.outputs.process_success == 'true' && steps.process_beta.outputs.merged_count > 0
+        if: steps.process_beta.outputs.merged_count > 0 && steps.process_beta.outputs.failed_count == 0
         uses: ./.github/actions/notify-chat
         with:
           name: "Beta Merge Success"
@@ -96,7 +96,7 @@ jobs:
           tag_moved: ${{ steps.move_beta_tag.outputs.tag_moved == 'true' && 'Yes (beta)' || 'No' }}
 
       - name: Notify Beta Merge Error
-        if: failure() && steps.process_beta.outputs.process_success == 'false'
+        if: steps.process_beta.outputs.failed_count > 0
         uses: ./.github/actions/notify-chat
         with:
           name: "Beta Merge Error"
