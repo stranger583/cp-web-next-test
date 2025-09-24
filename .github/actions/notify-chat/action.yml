@@ -71,10 +71,11 @@ runs:
             # Split failed tasks and format as list
             IFS='|' read -ra tasks <<< "${{ inputs.failed_tasks }}"
             for task in "${tasks[@]}"; do
-              # Extract task name and branch name
-              if [[ "$task" =~ ^(.+)\ \(([^)]+)\)$ ]]; then
-                task_name="${BASH_REMATCH[1]}"
-                branch_name="${BASH_REMATCH[2]}"
+              # Extract task name and branch name using string manipulation
+              if [[ "$task" == *" ("*")" ]]; then
+                task_name="${task% (*}"
+                branch_name="${task#* (}"
+                branch_name="${branch_name%)}"
                 FAILED_INFO="${FAILED_INFO}
         - ${task_name} \`(${branch_name})\`"
               else
