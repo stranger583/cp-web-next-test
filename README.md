@@ -68,3 +68,4 @@ export default tseslint.config([
 ])
 ```
 # cp-web-next-test
+# cp-web-next-auto-merge-test
