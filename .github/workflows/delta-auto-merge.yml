@@ -174,7 +174,7 @@ jobs:
             echo "## 📊 Delta Branch Summary"
             echo ""
             if [ "$BETA_EXISTS" = "true" ]; then
-              echo "**🔵 Source Beta Branch:** \`$BETA_BRANCH\`"
+              echo "**🔵🔵 Source Beta Branch:** \`$BETA_BRANCH\`"
             else
               echo "**❌ Beta Branch:** Not found"
             fi
