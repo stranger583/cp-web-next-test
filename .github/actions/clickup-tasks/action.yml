@@ -315,7 +315,7 @@ runs:
           # Add failed tasks details if any
           if [ -n "$failed_tasks_str" ] && [ "$failed_count" -gt 0 ]; then
             echo ""
-            echo "**❌ Failed Tasks:**"
+            echo "**❌❌ Failed Tasks:**"
             IFS='|' read -ra failed_tasks <<< "$failed_tasks_str"
             for task in "${failed_tasks[@]}"; do
               echo "  - $task"

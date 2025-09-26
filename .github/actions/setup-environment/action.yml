@@ -37,4 +37,4 @@ runs:
         echo "year=$YEAR" >> $GITHUB_OUTPUT
         echo "week=$WEEK" >> $GITHUB_OUTPUT
 
-        echo "📅 ${{ inputs.branch_type }} branch: $BRANCH_NAME"
+        echo "📅📅 ${{ inputs.branch_type }} branch: $BRANCH_NAME"

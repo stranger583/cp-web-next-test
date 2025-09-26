@@ -48,6 +48,6 @@ runs:
             echo "tag_moved=false" >> $GITHUB_OUTPUT
           fi
         else
-          echo "⚠️ Skipping ${{ inputs.tag_name }} tag movement (no merges)"
+          echo "⚠️⚠️ Skipping ${{ inputs.tag_name }} tag movement (no merges)"
           echo "tag_moved=false" >> $GITHUB_OUTPUT
         fi

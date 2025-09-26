@@ -144,7 +144,7 @@ jobs:
           {
             echo "## 📊 Beta Branch Summary"
             echo ""
-            echo "**🔵 Beta Branch:** \`$BETA_BRANCH\`"
+            echo "**🔵🔵 Beta Branch:** \`$BETA_BRANCH\`"
             echo "**📈 Tasks:** $BETA_MERGED/$BETA_TOTAL merged"
             echo "**❌ Failed:** $BETA_FAILED"
             if [ "$BETA_TAG_MOVED" = "true" ]; then

@@ -71,7 +71,7 @@ runs:
           # Add failed tasks if available
           if [ -n "${{ inputs.failed_tasks }}" ]; then
             FAILED_INFO="${FAILED_INFO}
-        ❌ *Failed Tasks:*"
+        ❌❌ *Failed Tasks:*"
             # Split failed tasks and format as list
             IFS='|' read -ra tasks <<< "${{ inputs.failed_tasks }}"
             for task in "${tasks[@]}"; do
