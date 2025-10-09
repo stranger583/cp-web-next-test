@@ -1,13 +1,16 @@
 name: Beta Auto Merge
 
 on:
-  workflow_dispatch:
+  schedule:
+    # Run at 12:00 PM UTC+8 (04:00 UTC) every Monday
+    - cron: '0 4 * * 1'
+  workflow_dispatch: # Allow manual triggering if needed
 
 env:
-  CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
-  CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
-  REPOSITORY_NAME: "cp-web-next-test"
-  BRANCH_PREFIX_BETA: "beta/sprint"
+  CLICKUP_API_TOKEN: ${{ secrets.FOR_AUTO_MERGE_TESTING_CLICKUP_API_TOKEN }}
+  CLICKUP_LIST_ID: ${{ secrets.FOR_AUTO_MERGE_TESTING_CLICKUP_LIST_ID }}
+  REPOSITORY_NAME: 'cp-web-next-test'
+  BRANCH_PREFIX_BETA: 'beta/sprint'
   MAX_RETRY_ATTEMPTS: 3
 
 jobs:
@@ -20,8 +23,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: "master"
+          ref: 'master'
           fetch-depth: 0
+
+      - name: Show current commit 除錯用
+        run: git rev-parse HEAD
+
+      - name: List local actions 除錯用
+        run: ls -R .github/actions
 
       - name: Setup Git
         run: |
@@ -32,7 +41,7 @@ jobs:
         id: setup
         uses: ./.github/actions/setup-environment
         with:
-          branch_type: "beta"
+          branch_type: 'beta'
 
       - name: Create Beta Branch
         id: create_beta
@@ -56,7 +65,7 @@ jobs:
         id: process_beta
         uses: ./.github/actions/clickup-tasks
         with:
-          status: "beta"
+          status: 'beta'
           branch_name: ${{ steps.create_beta.outputs.branch_name }}
 
       - name: Move Beta Tag
@@ -66,45 +75,37 @@ jobs:
         with:
           merged_count: ${{ steps.process_beta.outputs.merged_count }}
           failed_count: ${{ steps.process_beta.outputs.failed_count }}
-          tag_name: "beta"
+          tag_name: 'beta'
           branch_name: ${{ steps.create_beta.outputs.branch_name }}
-          step_name: "beta"
-
-      - name: Notify Beta Move Tag Success
-        if: steps.move_beta_tag.outputs.tag_moved == 'true'
-        uses: ./.github/actions/notify-chat
-        with:
-          name: "Beta Move Tag Success"
-          url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          type: "tag_success"
-          branch_type: "beta"
-          branch_name: ${{ steps.create_beta.outputs.branch_name }}
-          merged_count: ${{ steps.process_beta.outputs.merged_count }}
-          total_tasks: ${{ steps.process_beta.outputs.total_tasks }}
+          step_name: 'beta'
 
       - name: Notify Beta Merge Success
         if: steps.process_beta.outputs.merged_count > 0 && steps.process_beta.outputs.failed_count == 0
         uses: ./.github/actions/notify-chat
         with:
-          name: "Beta Merge Success"
+          name: 'Beta Merge Success'
           url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          type: "success"
-          branch_type: "beta"
+          type: 'success'
+          branch_type: 'beta'
           branch_name: ${{ steps.create_beta.outputs.branch_name }}
           merged_count: ${{ steps.process_beta.outputs.merged_count }}
           total_tasks: ${{ steps.process_beta.outputs.total_tasks }}
-          tag_moved: ${{ steps.move_beta_tag.outputs.tag_moved == 'true' && 'Yes (beta)' || 'No' }}
+          tag_moved: ${{ steps.move_beta_tag.outputs.tag_moved }}
 
       - name: Notify Beta Merge Error
         if: steps.process_beta.outputs.failed_count > 0
         uses: ./.github/actions/notify-chat
         with:
-          name: "Beta Merge Error"
+          name: 'Beta Merge Error'
           url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          type: "error"
-          branch_type: "beta"
+          type: 'error'
+          branch_type: 'beta'
           branch_name: ${{ steps.create_beta.outputs.branch_name }}
+          merged_count: ${{ steps.process_beta.outputs.merged_count }}
+          total_tasks: ${{ steps.process_beta.outputs.total_tasks }}
+          failed_count: ${{ steps.process_beta.outputs.failed_count }}
           failed_tasks: ${{ steps.process_beta.outputs.failed_tasks_str }}
+          failed_assignees: ${{ steps.process_beta.outputs.failed_assignees }}
           failed_branches: ${{ steps.create_beta.outputs.branch_name }}
 
       - name: Trigger Delta Workflow
@@ -144,7 +145,7 @@ jobs:
           {
             echo "## 📊 Beta Branch Summary"
             echo ""
-            echo "**🔵🔵 Beta Branch:** \`$BETA_BRANCH\`"
+            echo "**🔵 Beta Branch:** \`$BETA_BRANCH\`"
             echo "**📈 Tasks:** $BETA_MERGED/$BETA_TOTAL merged"
             echo "**❌ Failed:** $BETA_FAILED"
             if [ "$BETA_TAG_MOVED" = "true" ]; then

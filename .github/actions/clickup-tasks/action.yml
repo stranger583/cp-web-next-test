@@ -1,40 +1,40 @@
-name: "Process ClickUp Tasks"
-description: "Fetch and process ClickUp tasks for a specific status"
+name: 'Process ClickUp Tasks'
+description: 'Fetch and process ClickUp tasks for a specific status'
 inputs:
   status:
-    description: "Task status (beta or delta)"
+    description: 'Task status (beta or delta)'
     required: true
   branch_name:
-    description: "Target branch name"
+    description: 'Target branch name'
     required: true
 outputs:
   merged_count:
-    description: "Number of successfully merged tasks"
+    description: 'Number of successfully merged tasks'
     value: ${{ steps.process.outputs.merged_count }}
   total_tasks:
-    description: "Total number of tasks found"
+    description: 'Total number of tasks found'
     value: ${{ steps.process.outputs.total_tasks }}
   failed_count:
-    description: "Number of failed tasks"
+    description: 'Number of failed tasks'
     value: ${{ steps.process.outputs.failed_count }}
   failed_tasks_str:
-    description: "Failed tasks list"
+    description: 'Failed tasks list'
     value: ${{ steps.process.outputs.failed_tasks_str }}
   process_success:
-    description: "Whether processing was successful"
+    description: 'Whether processing was successful'
     value: ${{ steps.process.outputs.process_success }}
   has_tasks:
-    description: "Whether tasks were found"
+    description: 'Whether tasks were found'
     value: ${{ steps.process.outputs.has_tasks }}
   all_tasks_merged:
-    description: "Whether all tasks were merged"
+    description: 'Whether all tasks were merged'
     value: ${{ steps.process.outputs.all_tasks_merged }}
   failed_assignees:
-    description: "Failed tasks assignees for notification"
+    description: 'Failed tasks assignees for notification'
     value: ${{ steps.process.outputs.failed_assignees }}
 
 runs:
-  using: "composite"
+  using: 'composite'
   steps:
     - name: Process Tasks
       id: process
@@ -189,7 +189,7 @@ runs:
               if merge_task_branch "$task_name" "$branch_name" "$task_type"; then
                 merged_count=$((merged_count + 1))
               else
-                failed_tasks+=("$task_name ($branch_name) - Assignee: $assignee")
+                failed_tasks+=("$branch_name ($task_name) - $assignee")
                 if [ "$assignee" != "unassigned" ]; then
                   failed_assignees+=("$assignee")
                 fi
@@ -206,6 +206,10 @@ runs:
           # Report failed tasks
           if [ ${#failed_tasks[@]} -gt 0 ]; then
             echo "❌ Failed $task_type tasks:" >&2
+            echo "🔍 Debug: failed_tasks array has ${#failed_tasks[@]} items" >&2
+            for i in "${!failed_tasks[@]}"; do
+              echo "🔍 Debug: failed_tasks[$i]='${failed_tasks[$i]}'" >&2
+            done
             for task in "${failed_tasks[@]}"; do
               echo "   $task" >&2
             done
@@ -228,7 +232,9 @@ runs:
           local failed_tasks_str=""
           local failed_assignees_str=""
           if [ ${#failed_tasks[@]} -gt 0 ]; then
+            echo "🔍 Debug: Creating failed_tasks_str from ${#failed_tasks[@]} items" >&2
             failed_tasks_str=$(printf "%s|" "${failed_tasks[@]}" | sed 's/|$//')
+            echo "🔍 Debug: failed_tasks_str='$failed_tasks_str'" >&2
           fi
           if [ ${#failed_assignees[@]} -gt 0 ]; then
             # Remove duplicates and create unique assignees list
@@ -315,7 +321,7 @@ runs:
           # Add failed tasks details if any
           if [ -n "$failed_tasks_str" ] && [ "$failed_count" -gt 0 ]; then
             echo ""
-            echo "**❌❌ Failed Tasks:**"
+            echo "**❌ Failed Tasks:**"
             IFS='|' read -ra failed_tasks <<< "$failed_tasks_str"
             for task in "${failed_tasks[@]}"; do
               echo "  - $task"

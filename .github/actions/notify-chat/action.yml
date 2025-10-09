@@ -1,68 +1,68 @@
-name: "Notify Google Chat"
-description: "Send notification to Google Chat with standardized format"
+name: 'Notify Google Chat'
+description: 'Send notification to Google Chat with standardized format'
 inputs:
-  name:
-    description: "Notification name"
-    required: true
   url:
-    description: "Google Chat webhook URL"
+    description: 'Google Chat webhook URL'
     required: true
   type:
-    description: "Notification type (success, error, tag_success)"
+    description: 'Notification type (success, error, tag_success)'
     required: true
   branch_type:
-    description: "Branch type (beta, delta)"
+    description: 'Branch type (beta, delta)'
     required: true
   branch_name:
-    description: "Branch name"
+    description: 'Branch name'
     required: true
   merged_count:
-    description: "Number of merged tasks"
+    description: 'Number of merged tasks'
     required: false
-    default: "0"
+    default: '0'
   total_tasks:
-    description: "Total number of tasks"
+    description: 'Total number of tasks'
     required: false
-    default: "0"
+    default: '0'
+  failed_count:
+    description: 'Number of failed tasks'
+    required: false
+    default: '0'
   failed_tasks:
-    description: "Failed tasks list"
+    description: 'Failed tasks list'
     required: false
-    default: ""
+    default: ''
   failed_branches:
-    description: "Failed branches list"
+    description: 'Failed branches list'
     required: false
-    default: ""
+    default: ''
   tag_moved:
-    description: "Whether tag was moved"
+    description: 'Whether tag was moved'
     required: false
-    default: "No"
+    default: ''
   failed_assignees:
-    description: "Failed tasks assignees to mention"
+    description: 'Failed tasks assignees to mention'
     required: false
-    default: ""
+    default: ''
 
 runs:
-  using: "composite"
+  using: 'composite'
   steps:
     - name: Send Google Chat Notification
       shell: bash
       run: |
-        # 準備訊息內容 (測試快取是否存在)
+        # 準備訊息內容
         if [ "${{ inputs.type }}" = "success" ]; then
           EMOJI="🟢"
           TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Merge Success"
-          ADDITIONAL_INFO="📁 *Repository:* \`${GITHUB_REPOSITORY}\`
+          ADDITIONAL_INFO="- *Repository:* \`${GITHUB_REPOSITORY}\`
         - *Branch:* \`${{ inputs.branch_name }}\`
         - *Total ${{ inputs.branch_type }} tasks:* ${{ inputs.total_tasks }}
         - *Successfully merged:* ${{ inputs.merged_count }}
-        - *Failed:* ${{ inputs.failed_count }}
-        - *Tag Moved:* ${{ inputs.tag_moved }}"
-        elif [ "${{ inputs.type }}" = "error" ]; then
+        - *Move Tag:* ${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} ${{ inputs.tag_moved == 'true' && 'Success' || 'Failed' }}"
+        else
           EMOJI="🔴"
           TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Tasks Processing Failed"
           
           # Build failed information
-          FAILED_INFO="📁 *Repository:* \`${GITHUB_REPOSITORY}\`
+          FAILED_INFO="- *Repository:* \`${GITHUB_REPOSITORY}\`
         - *Branch:* \`${{ inputs.branch_name }}\`
         - *Total ${{ inputs.branch_type }} tasks:* ${{ inputs.total_tasks }}
         - *Successfully merged:* ${{ inputs.merged_count }}
@@ -71,32 +71,33 @@ runs:
           # Add failed tasks if available
           if [ -n "${{ inputs.failed_tasks }}" ]; then
             FAILED_INFO="${FAILED_INFO}
-        ❌❌ *Failed Tasks:*"
+            ❌ *Failed Tasks:*"
+            # Debug: Log the received failed_tasks input
+            echo "🔍 Debug: received failed_tasks='${{ inputs.failed_tasks }}'" >&2
+            failed_tasks_input="${{ inputs.failed_tasks }}"
+            echo "🔍 Debug: failed_tasks length=${#failed_tasks_input}" >&2
+            
             # Split failed tasks and format as list
             IFS='|' read -ra tasks <<< "${{ inputs.failed_tasks }}"
-            for task in "${tasks[@]}"; do
-              FAILED_INFO="${FAILED_INFO}
-        - ${task}"
+            echo "🔍 Debug: split into ${#tasks[@]} tasks" >&2
+            for i in "${!tasks[@]}"; do
+              echo "🔍 Debug: task[$i]='${tasks[$i]}'" >&2
             done
+            
+            # Process each task
+            for task in "${tasks[@]}"; do
+              if [ -n "$task" ]; then
+                echo "🔍 Debug: Processing task: '$task'" >&2
+                FAILED_INFO="${FAILED_INFO}
+        - ${task}"
+              else
+                echo "🔍 Debug: Skipping empty task" >&2
+              fi
+            done
+          else
+            echo "🔍 Debug: No failed_tasks input provided" >&2
           fi
-          
-          # Add assignee mentions if available
-          if [ -n "${{ inputs.failed_assignees }}" ]; then
-            FAILED_INFO="${FAILED_INFO}
-
-        👥 *Please check:* ${{ inputs.failed_assignees }}"
-          fi
-          
           ADDITIONAL_INFO="$FAILED_INFO"
-        else
-          EMOJI="🟢"
-          TITLE="${{ inputs.branch_type == 'beta' && 'Beta' || 'Delta' }} Move Tag Success"
-          ADDITIONAL_INFO="📁 *Repository:* \`${GITHUB_REPOSITORY}\`
-        🌿 *Branch:* \`${{ inputs.branch_name }}\`
-        🏷️ *Tag:* \`${{ inputs.branch_type }}\`
-        📊 *Total ${{ inputs.branch_type }} tasks:* ${{ inputs.total_tasks }}
-        ✅ *Successfully merged:* ${{ inputs.merged_count }}
-        ❌ *Failed:* ${{ inputs.failed_count }}"
         fi
 
         # 構建完整訊息
