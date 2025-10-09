@@ -7,8 +7,8 @@ on:
   workflow_dispatch: # Allow manual triggering if needed
 
 env:
-  CLICKUP_API_TOKEN: ${{ secrets.FOR_AUTO_MERGE_TESTING_CLICKUP_API_TOKEN }}
-  CLICKUP_LIST_ID: ${{ secrets.FOR_AUTO_MERGE_TESTING_CLICKUP_LIST_ID }}
+  CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
+  CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
   REPOSITORY_NAME: 'cp-web-next-test'
   BRANCH_PREFIX_BETA: 'beta/sprint'
   MAX_RETRY_ATTEMPTS: 3
