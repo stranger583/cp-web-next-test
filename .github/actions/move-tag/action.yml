@@ -39,7 +39,15 @@ runs:
           git push --delete origin "${{ inputs.tag_name }}" 2>/dev/null || true
           echo "🔍 Debug: Deleted old tag" >&2
           
-          if yarn move-tag "${{ inputs.tag_name }}"; then
+          # Extract sprint number from branch name and create new tag
+          SPRINT_NUM=$(echo "${{ inputs.branch_name }}" | sed 's/.*sprint-\([0-9]*\).*/\1/')
+          NEW_TAG="${{ inputs.tag_name }}/sprint-${SPRINT_NUM}"
+          echo "🔍 Debug: Creating tag $NEW_TAG" >&2
+          
+          git tag -a "$NEW_TAG" -m "$NEW_TAG"
+          git push origin "$NEW_TAG"
+          
+          if [ $? -eq 0 ]; then
             echo "✅ Successfully moved ${{ inputs.tag_name }} tag"
             echo "tag_moved=true" >> $GITHUB_OUTPUT
             echo "🔍 Debug: Set tag_moved=true" >&2
