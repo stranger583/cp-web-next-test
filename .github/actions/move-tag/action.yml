@@ -34,9 +34,9 @@ runs:
         elif [ ${{ inputs.merged_count }} -gt 0 ]; then
           echo "🏷️ Moving ${{ inputs.tag_name }} tag to current commit..."
           
-          # Delete old tag first
+          # Delete old tag first (ignore errors if tag doesn't exist)
           git tag -d "${{ inputs.tag_name }}" 2>/dev/null || true
-          git push --delete origin "${{ inputs.tag_name }}" 2>/dev/null || true
+          git push --delete origin "${{ inputs.tag_name }}" 2>/dev/null || echo "🔍 Debug: Remote tag may not exist" >&2
           echo "🔍 Debug: Deleted old tag" >&2
           
           # Create new tag at current commit
