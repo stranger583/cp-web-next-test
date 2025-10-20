@@ -99,7 +99,7 @@ jobs:
       - name: Move Delta Tag
         id: move_delta_tag
         if: steps.process_delta.outputs.process_success == 'true'
-        uses: ./.github/actions/move-tag
+        uses: stranger583/cp-web-next-test/.github/actions/move-tag@master
         with:
           merged_count: ${{ steps.process_delta.outputs.merged_count }}
           failed_count: ${{ steps.process_delta.outputs.failed_count }}
