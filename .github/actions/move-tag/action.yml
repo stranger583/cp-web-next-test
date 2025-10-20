@@ -33,12 +33,11 @@ runs:
           echo "tag_moved=false" >> $GITHUB_OUTPUT
         elif [ ${{ inputs.merged_count }} -gt 0 ]; then
           echo "🏷️ Moving ${{ inputs.tag_name }} tag to current commit..."
-
-          # 切換到指定的分支
-          echo "🔄 Switching to branch: ${{ inputs.branch_name }}"
-          git checkout ${{ inputs.branch_name }}
-          git pull origin ${{ inputs.branch_name }}
-
+          
+          # Delete old tag first
+          git tag -d "${{ inputs.tag_name }}" 2>/dev/null || true
+          git push --delete origin "${{ inputs.tag_name }}" 2>/dev/null || true
+          
           if yarn move-tag "${{ inputs.tag_name }}"; then
             echo "✅ Successfully moved ${{ inputs.tag_name }} tag"
             echo "tag_moved=true" >> $GITHUB_OUTPUT
