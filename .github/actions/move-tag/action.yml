@@ -1,28 +1,28 @@
-name: 'Move Tag'
-description: 'Move tag if merge was successful'
+name: "Move Tag"
+description: "Move tag if merge was successful"
 inputs:
   merged_count:
-    description: 'Number of successfully merged tasks'
+    description: "Number of successfully merged tasks"
     required: true
   failed_count:
-    description: 'Number of failed tasks'
+    description: "Number of failed tasks"
     required: true
   tag_name:
-    description: 'Tag name to move'
+    description: "Tag name to move"
     required: true
   branch_name:
-    description: 'Branch name'
+    description: "Branch name"
     required: true
   step_name:
-    description: 'Step name for logging'
+    description: "Step name for logging"
     required: true
 outputs:
   tag_moved:
-    description: 'Whether tag was moved'
+    description: "Whether tag was moved"
     value: ${{ steps.move.outputs.tag_moved }}
 
 runs:
-  using: 'composite'
+  using: "composite"
   steps:
     - name: Move Tag
       id: move
@@ -33,6 +33,12 @@ runs:
           echo "tag_moved=false" >> $GITHUB_OUTPUT
         elif [ ${{ inputs.merged_count }} -gt 0 ]; then
           echo "🏷️ Moving ${{ inputs.tag_name }} tag to current commit..."
+
+          # 切換到指定的分支
+          echo "🔄 Switching to branch: ${{ inputs.branch_name }}"
+          git checkout ${{ inputs.branch_name }}
+          git pull origin ${{ inputs.branch_name }}
+
           if yarn move-tag "${{ inputs.tag_name }}"; then
             echo "✅ Successfully moved ${{ inputs.tag_name }} tag"
             echo "tag_moved=true" >> $GITHUB_OUTPUT
