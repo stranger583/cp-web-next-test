@@ -83,6 +83,9 @@ jobs:
             
             # Create delta branch
             git checkout -b $DELTA_BRANCH
+            
+            # 設定 PAT 來推送新分支
+            git remote set-url origin https://${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }}@github.com/${{ github.repository }}.git
             git push origin $DELTA_BRANCH
             echo "branch_exists=false" >> $GITHUB_OUTPUT
             echo "branch_created=true" >> $GITHUB_OUTPUT
