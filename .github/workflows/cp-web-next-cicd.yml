@@ -1,0 +1,13 @@
+name: cp-web-next-cicd
+
+on:
+  push:
+    tags:
+      - "*"
+
+jobs:
+  trigger-success:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Echo success trigger
+        run: echo "成功觸發"
