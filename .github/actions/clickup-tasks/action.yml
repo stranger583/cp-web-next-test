@@ -241,7 +241,15 @@ runs:
             git remote set-url origin "$REMOTE_URL"
             
             # 檢查是否有變更需要推送
-            if ! git diff --quiet HEAD origin/$target_branch; then
+            echo "🔍 Debug: Checking for changes..."
+            echo "🔍 Debug: Current branch: $(git branch --show-current)"
+            echo "🔍 Debug: Git status:"
+            git status
+            echo "🔍 Debug: Git log --oneline -3:"
+            git log --oneline -3
+            
+            # 檢查是否有未推送的提交
+            if git log origin/$target_branch..HEAD --oneline | grep -q .; then
               echo "🔍 Debug: Changes detected, attempting to push to origin $target_branch" >&2
               if git push origin "$target_branch" >/dev/null 2>&1; then
                 echo "✅ Successfully pushed all $task_type changes" >&2
