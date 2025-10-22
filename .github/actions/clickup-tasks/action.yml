@@ -152,7 +152,7 @@ runs:
             fi
           else
             echo "ℹ️ No changes to commit (already up to date)" >&2
-            return 0
+            return 2  # 返回 2 表示沒有變更，不是錯誤但也不算成功 merge
           fi
         }
 
@@ -189,9 +189,15 @@ runs:
           # Process each task using here-string to avoid subshell issues
           while IFS=$'\t' read -r task_name branch_name task_id assignee; do
             if [ -n "$task_name" ] && [ -n "$branch_name" ]; then
-              if merge_task_branch "$task_name" "$branch_name" "$task_type"; then
+              merge_result=$(merge_task_branch "$task_name" "$branch_name" "$task_type"; echo $?)
+              if [ "$merge_result" -eq 0 ]; then
+                # 真正的成功 merge
                 merged_count=$((merged_count + 1))
+              elif [ "$merge_result" -eq 2 ]; then
+                # 沒有變更，不算失敗也不算成功
+                echo "ℹ️ Task $task_name has no changes to merge" >&2
               else
+                # 真正的失敗
                 failed_tasks+=("$branch_name ($task_name) - $assignee")
                 if [ "$assignee" != "unassigned" ]; then
                   failed_assignees+=("$assignee")
