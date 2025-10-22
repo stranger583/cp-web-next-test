@@ -36,7 +36,23 @@ runs:
           echo "tag_moved=false" >> $GITHUB_OUTPUT
         elif [ ${{ inputs.merged_count }} -gt 0 ]; then
           echo "🏷️ Moving ${{ inputs.tag_name }} tag to current commit..."
-          if yarn move-tag "${{ inputs.tag_name }}"; then
+          # 設定 PAT 來推送
+          git config --global user.name 'GitHub Actions'
+          git config --global user.email 'actions@github.com'
+          git remote set-url origin https://${{ inputs.pat_token }}@github.com/${{ github.repository }}.git
+          
+          # 直接執行 tag 操作，不使用 yarn
+          TAG_NAME="${{ inputs.tag_name }}"
+          echo "🗑️ Deleting local tag: $TAG_NAME"
+          git tag -d "${TAG_NAME}" || true
+          echo "🗑️ Deleting remote tag: $TAG_NAME"
+          git push --delete origin "${TAG_NAME}" || true
+          echo "🏷️ Creating new tag: $TAG_NAME"
+          git tag -a "${TAG_NAME}" -m "${TAG_NAME}"
+          echo "📤 Pushing new tag: $TAG_NAME"
+          git push origin "${TAG_NAME}"
+          
+          if [ $? -eq 0 ]; then
             echo "✅ Successfully moved ${{ inputs.tag_name }} tag"
             echo "tag_moved=true" >> $GITHUB_OUTPUT
             echo "🔍 Debug: Set tag_moved=true" >&2
