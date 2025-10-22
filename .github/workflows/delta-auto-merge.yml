@@ -102,6 +102,12 @@ jobs:
             echo "🔍 Current remote URL:"
             git remote -v
             echo "🔍 Testing git push with debug..."
+            
+            # 嘗試使用不同的認證方式
+            echo "🔍 Trying alternative authentication..."
+            
+            # 方法 1: 使用 token 環境變數
+            export GITHUB_TOKEN="${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }}"
             git push origin $DELTA_BRANCH
             echo "branch_exists=false" >> $GITHUB_OUTPUT
             echo "branch_created=true" >> $GITHUB_OUTPUT
