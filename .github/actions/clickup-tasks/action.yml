@@ -7,6 +7,9 @@ inputs:
   branch_name:
     description: 'Target branch name'
     required: true
+  pat_token:
+    description: 'Personal Access Token for push'
+    required: true
 outputs:
   merged_count:
     description: 'Number of successfully merged tasks'
@@ -218,6 +221,10 @@ runs:
           # Push changes if successful merges
           if [ $merged_count -gt 0 ]; then
             echo "📤 Pushing $merged_count successful $task_type merges..." >&2
+            # 設定 PAT 來推送
+            git config --global user.name 'GitHub Actions'
+            git config --global user.email 'actions@github.com'
+            git remote set-url origin https://${{ inputs.pat_token }}@github.com/${{ github.repository }}.git
             if git push origin "$target_branch" >/dev/null 2>&1; then
               echo "✅ Successfully pushed all $task_type changes" >&2
             else

@@ -96,6 +96,7 @@ jobs:
         with:
           status: "delta"
           branch_name: ${{ steps.create_delta.outputs.branch_name }}
+          pat_token: ${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }}
 
       - name: Move Delta Tag
         id: move_delta_tag
