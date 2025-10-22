@@ -6,8 +6,8 @@ on:
 env:
   CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
   CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
-  REPOSITORY_NAME: 'cp-web-next-test'
-  BRANCH_PREFIX_DELTA: 'delta/sprint'
+  REPOSITORY_NAME: "cp-web-next-test"
+  BRANCH_PREFIX_DELTA: "delta/sprint"
   MAX_RETRY_ATTEMPTS: 3
 
 jobs:
@@ -20,8 +20,9 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: 'master'
+          ref: "master"
           fetch-depth: 0
+          token: ${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }}
 
       - name: Setup Git
         run: |
@@ -32,7 +33,7 @@ jobs:
         id: setup
         uses: ./.github/actions/setup-environment
         with:
-          branch_type: 'delta'
+          branch_type: "delta"
 
       - name: Find Beta Branch
         id: find_beta
@@ -93,7 +94,7 @@ jobs:
         id: process_delta
         uses: ./.github/actions/clickup-tasks
         with:
-          status: 'delta'
+          status: "delta"
           branch_name: ${{ steps.create_delta.outputs.branch_name }}
 
       - name: Move Delta Tag
@@ -103,18 +104,20 @@ jobs:
         with:
           merged_count: ${{ steps.process_delta.outputs.merged_count }}
           failed_count: ${{ steps.process_delta.outputs.failed_count }}
-          tag_name: 'delta'
+          tag_name: "delta"
           branch_name: ${{ steps.create_delta.outputs.branch_name }}
-          step_name: 'delta'
+          step_name: "delta"
+          # 💡 新增這一行來傳遞 PAT
+          pat_token: ${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }} # 使用您在步驟 2 創建的 Secret 名稱
 
       - name: Notify Delta Merge Success
         if: steps.process_delta.outputs.merged_count > 0 && steps.process_delta.outputs.failed_count == 0
         uses: ./.github/actions/notify-chat
         with:
-          name: 'Delta Merge Success'
+          name: "Delta Merge Success"
           url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          type: 'success'
-          branch_type: 'delta'
+          type: "success"
+          branch_type: "delta"
           branch_name: ${{ steps.create_delta.outputs.branch_name }}
           merged_count: ${{ steps.process_delta.outputs.merged_count }}
           total_tasks: ${{ steps.process_delta.outputs.total_tasks }}
@@ -124,10 +127,10 @@ jobs:
         if: steps.process_delta.outputs.failed_count > 0
         uses: ./.github/actions/notify-chat
         with:
-          name: 'Delta Merge Error'
+          name: "Delta Merge Error"
           url: ${{ secrets.GOOGLE_CHAT_WEBHOOK_URL }}
-          type: 'error'
-          branch_type: 'delta'
+          type: "error"
+          branch_type: "delta"
           branch_name: ${{ steps.create_delta.outputs.branch_name }}
           merged_count: ${{ steps.process_delta.outputs.merged_count }}
           total_tasks: ${{ steps.process_delta.outputs.total_tasks }}
