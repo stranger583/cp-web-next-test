@@ -224,7 +224,7 @@ runs:
             # 設定 PAT 來推送
             git config --global user.name 'GitHub Actions'
             git config --global user.email 'actions@github.com'
-            git remote set-url origin https://${{ inputs.pat_token }}@github.com/${{ github.repository }}.git
+            git remote set-url origin https://$PAT_TOKEN@github.com/$REPOSITORY_NAME.git
             if git push origin "$target_branch" >/dev/null 2>&1; then
               echo "✅ Successfully pushed all $task_type changes" >&2
             else
@@ -287,6 +287,9 @@ runs:
           exit 0
         fi
 
+        # 設定 PAT 環境變數
+        export PAT_TOKEN="${{ inputs.pat_token }}"
+        
         # Process tasks
         RESULT=$(process_tasks "$TASK_DATA" "${{ inputs.status }}" "${{ inputs.branch_name }}" | tail -1)
 
