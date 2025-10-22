@@ -150,6 +150,18 @@ runs:
               cleanup_git
               return 1
             fi
+          elif ! git diff --quiet; then
+            # 有 working directory changes，需要先 add
+            echo "🔄 Adding changes from squash merge..." >&2
+            git add .
+            if git commit -m "feat: merge $task_type $branch_name" >/dev/null 2>&1; then
+              echo "✅ Successfully squash merged $task_type $branch_name" >&2
+              return 0
+            else
+              echo "❌ Failed to commit squash merge for $task_type $branch_name" >&2
+              cleanup_git
+              return 1
+            fi
           else
             echo "ℹ️ No changes to commit (already up to date)" >&2
             return 2  # 返回 2 表示沒有變更，不是錯誤但也不算成功 merge
