@@ -1,43 +1,43 @@
-name: 'Process ClickUp Tasks'
-description: 'Fetch and process ClickUp tasks for a specific status'
+name: "Process ClickUp Tasks"
+description: "Fetch and process ClickUp tasks for a specific status"
 inputs:
   status:
-    description: 'Task status (beta or delta)'
+    description: "Task status (beta or delta)"
     required: true
   branch_name:
-    description: 'Target branch name'
+    description: "Target branch name"
     required: true
   pat_token:
-    description: 'Personal Access Token for push'
+    description: "Personal Access Token for push"
     required: true
 outputs:
   merged_count:
-    description: 'Number of successfully merged tasks'
+    description: "Number of successfully merged tasks"
     value: ${{ steps.process.outputs.merged_count }}
   total_tasks:
-    description: 'Total number of tasks found'
+    description: "Total number of tasks found"
     value: ${{ steps.process.outputs.total_tasks }}
   failed_count:
-    description: 'Number of failed tasks'
+    description: "Number of failed tasks"
     value: ${{ steps.process.outputs.failed_count }}
   failed_tasks_str:
-    description: 'Failed tasks list'
+    description: "Failed tasks list"
     value: ${{ steps.process.outputs.failed_tasks_str }}
   process_success:
-    description: 'Whether processing was successful'
+    description: "Whether processing was successful"
     value: ${{ steps.process.outputs.process_success }}
   has_tasks:
-    description: 'Whether tasks were found'
+    description: "Whether tasks were found"
     value: ${{ steps.process.outputs.has_tasks }}
   all_tasks_merged:
-    description: 'Whether all tasks were merged'
+    description: "Whether all tasks were merged"
     value: ${{ steps.process.outputs.all_tasks_merged }}
   failed_assignees:
-    description: 'Failed tasks assignees for notification'
+    description: "Failed tasks assignees for notification"
     value: ${{ steps.process.outputs.failed_assignees }}
 
 runs:
-  using: 'composite'
+  using: "composite"
   steps:
     - name: Process Tasks
       id: process
