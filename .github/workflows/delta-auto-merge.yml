@@ -97,6 +97,11 @@ jobs:
             
             # Create delta branch
             git checkout -b $DELTA_BRANCH
+            
+            # Debug: 檢查 remote URL 和認證
+            echo "🔍 Current remote URL:"
+            git remote -v
+            echo "🔍 Testing git push with debug..."
             git push origin $DELTA_BRANCH
             echo "branch_exists=false" >> $GITHUB_OUTPUT
             echo "branch_created=true" >> $GITHUB_OUTPUT
