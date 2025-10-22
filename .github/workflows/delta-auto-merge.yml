@@ -92,7 +92,7 @@ jobs:
 
       - name: Process Delta Tasks
         id: process_delta
-        uses: ./.github/actions/clickup-tasks
+        uses: stranger583/cp-web-next-test/.github/actions/clickup-tasks@master
         with:
           status: "delta"
           branch_name: ${{ steps.create_delta.outputs.branch_name }}
