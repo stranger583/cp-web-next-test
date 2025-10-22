@@ -248,7 +248,7 @@ runs:
             echo "🔍 Debug: REPOSITORY_NAME: $REPOSITORY_NAME" >&2
             
             # 設定 remote URL
-            REMOTE_URL="https://$PAT_TOKEN@github.com/$REPOSITORY_NAME.git"
+            REMOTE_URL="https://$PAT_TOKEN@github.com/stranger583/$REPOSITORY_NAME.git"
             echo "🔍 Debug: Setting remote URL to: $REMOTE_URL" >&2
             git remote set-url origin "$REMOTE_URL"
             
