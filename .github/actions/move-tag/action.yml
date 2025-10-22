@@ -1,28 +1,28 @@
-name: "Move Tag"
-description: "Move tag if merge was successful"
+name: 'Move Tag'
+description: 'Move tag if merge was successful'
 inputs:
   merged_count:
-    description: "Number of successfully merged tasks"
+    description: 'Number of successfully merged tasks'
     required: true
   failed_count:
-    description: "Number of failed tasks"
+    description: 'Number of failed tasks'
     required: true
   tag_name:
-    description: "Tag name to move"
+    description: 'Tag name to move'
     required: true
   branch_name:
-    description: "Branch name"
+    description: 'Branch name'
     required: true
   step_name:
-    description: "Step name for logging"
+    description: 'Step name for logging'
     required: true
 outputs:
   tag_moved:
-    description: "Whether tag was moved"
+    description: 'Whether tag was moved'
     value: ${{ steps.move.outputs.tag_moved }}
 
 runs:
-  using: "composite"
+  using: 'composite'
   steps:
     - name: Move Tag
       id: move
@@ -33,31 +33,7 @@ runs:
           echo "tag_moved=false" >> $GITHUB_OUTPUT
         elif [ ${{ inputs.merged_count }} -gt 0 ]; then
           echo "🏷️ Moving ${{ inputs.tag_name }} tag to current commit..."
-          
-          # Switch to the correct branch and ensure we're on the latest commit
-          git checkout "${{ inputs.branch_name }}"
-          git pull origin "${{ inputs.branch_name }}"
-          git reset --hard origin/"${{ inputs.branch_name }}"
-          echo "🔍 Debug: Switched to branch ${{ inputs.branch_name }}" >&2
-          echo "🔍 Debug: Current commit: $(git rev-parse HEAD)" >&2
-          
-          # Delete old tag first (ignore errors if tag doesn't exist)
-          echo "🔍 Debug: Before delete - checking current tags:" >&2
-          git tag -l | grep "${{ inputs.tag_name }}" || echo "No local tag found" >&2
-          
-          git tag -d "${{ inputs.tag_name }}" 2>/dev/null || true
-          git push --delete origin "${{ inputs.tag_name }}" 2>/dev/null || echo "🔍 Debug: Remote tag may not exist" >&2
-          echo "🔍 Debug: Deleted old tag" >&2
-          
-          # Create new tag at current commit
-          echo "🔍 Debug: Creating new tag at commit: $(git rev-parse HEAD)" >&2
-          git tag -a "${{ inputs.tag_name }}" -m "${{ inputs.tag_name }}"
-          git push origin "${{ inputs.tag_name }}"
-          
-          echo "🔍 Debug: After create - checking tags:" >&2
-          git tag -l | grep "${{ inputs.tag_name }}" || echo "No tag found after create" >&2
-          
-          if [ $? -eq 0 ]; then
+          if yarn move-tag "${{ inputs.tag_name }}"; then
             echo "✅ Successfully moved ${{ inputs.tag_name }} tag"
             echo "tag_moved=true" >> $GITHUB_OUTPUT
             echo "🔍 Debug: Set tag_moved=true" >&2
