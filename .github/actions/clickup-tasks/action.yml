@@ -261,7 +261,11 @@ runs:
             git log --oneline -3
             
             # 檢查是否有未推送的提交
-            if git log origin/$target_branch..HEAD --oneline | grep -q .; then
+            echo "🔍 Debug: Checking for unpushed commits..."
+            UNPUSHED_COMMITS=$(git log origin/$target_branch..HEAD --oneline)
+            echo "🔍 Debug: Unpushed commits: $UNPUSHED_COMMITS"
+            
+            if [ -n "$UNPUSHED_COMMITS" ]; then
               echo "🔍 Debug: Changes detected, attempting to push to origin $target_branch" >&2
               if git push origin "$target_branch" >/dev/null 2>&1; then
                 echo "✅ Successfully pushed all $task_type changes" >&2
