@@ -282,6 +282,8 @@ runs:
                 echo "✅ Successfully force pushed all $task_type changes" >&2
               else
                 echo "::error::❌ Failed to push $task_type changes even with force" >&2
+                echo "🔍 Debug: Force push error details:" >&2
+                git push origin "$target_branch" --force 2>&1 | head -10 >&2
                 return 1
               fi
             fi
