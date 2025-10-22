@@ -240,17 +240,21 @@ runs:
             echo "🔍 Debug: Setting remote URL to: $REMOTE_URL" >&2
             git remote set-url origin "$REMOTE_URL"
             
-            # 嘗試推送
-            echo "🔍 Debug: Attempting to push to origin $target_branch" >&2
-            if git push origin "$target_branch" >/dev/null 2>&1; then
-              echo "✅ Successfully pushed all $task_type changes" >&2
+            # 檢查是否有變更需要推送
+            if ! git diff --quiet HEAD origin/$target_branch; then
+              echo "🔍 Debug: Changes detected, attempting to push to origin $target_branch" >&2
+              if git push origin "$target_branch" >/dev/null 2>&1; then
+                echo "✅ Successfully pushed all $task_type changes" >&2
+              else
+                echo "::error::❌ Failed to push $task_type changes" >&2
+                echo "🔍 Debug: Push failed, checking git status:" >&2
+                git status >&2
+                echo "🔍 Debug: Remote URL:" >&2
+                git remote -v >&2
+                return 1
+              fi
             else
-              echo "::error::❌ Failed to push $task_type changes" >&2
-              echo "🔍 Debug: Push failed, checking git status:" >&2
-              git status >&2
-              echo "🔍 Debug: Remote URL:" >&2
-              git remote -v >&2
-              return 1
+              echo "ℹ️ No changes to push (already up to date)" >&2
             fi
           else
             echo "⚠️ No $task_type changes to push" >&2
