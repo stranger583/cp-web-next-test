@@ -29,19 +29,8 @@ jobs:
           git config --global user.name 'GitHub Actions'
           git config --global user.email 'actions@github.com'
 
-          # Debug: 檢查 PAT 是否設定
-          if [ -n "${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }}" ]; then
-            echo "✅ PAT token is set"
-          else
-            echo "❌ PAT token is not set"
-            exit 1
-          fi
-
           # 確保使用 PAT 設定 remote URL
-          echo "🔍 Setting remote URL with PAT..."
           git remote set-url origin https://${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }}@github.com/${{ github.repository }}.git
-          echo "🔍 Remote URL set to:"
-          git remote -v
 
       - name: Setup Environment
         id: setup
@@ -98,15 +87,7 @@ jobs:
             # Create delta branch
             git checkout -b $DELTA_BRANCH
             
-            # Debug: 檢查 remote URL 和認證
-            echo "🔍 Current remote URL:"
-            git remote -v
-            echo "🔍 Testing git push with debug..."
-            
-            # 嘗試使用不同的認證方式
-            echo "🔍 Trying alternative authentication..."
-            
-            # 方法 1: 使用 token 環境變數
+            # 推送新創建的 delta branch
             export GITHUB_TOKEN="${{ secrets.GH_PAT_FOR_WORKFLOW_PUSH }}"
             git push origin $DELTA_BRANCH
             echo "branch_exists=false" >> $GITHUB_OUTPUT
