@@ -224,11 +224,26 @@ runs:
             # 設定 PAT 來推送
             git config --global user.name 'GitHub Actions'
             git config --global user.email 'actions@github.com'
-            git remote set-url origin https://$PAT_TOKEN@github.com/$REPOSITORY_NAME.git
+            
+            # Debug: 檢查環境變數
+            echo "🔍 Debug: PAT_TOKEN is set: $([ -n "$PAT_TOKEN" ] && echo "yes" || echo "no")" >&2
+            echo "🔍 Debug: REPOSITORY_NAME: $REPOSITORY_NAME" >&2
+            
+            # 設定 remote URL
+            REMOTE_URL="https://$PAT_TOKEN@github.com/$REPOSITORY_NAME.git"
+            echo "🔍 Debug: Setting remote URL to: $REMOTE_URL" >&2
+            git remote set-url origin "$REMOTE_URL"
+            
+            # 嘗試推送
+            echo "🔍 Debug: Attempting to push to origin $target_branch" >&2
             if git push origin "$target_branch" >/dev/null 2>&1; then
               echo "✅ Successfully pushed all $task_type changes" >&2
             else
               echo "::error::❌ Failed to push $task_type changes" >&2
+              echo "🔍 Debug: Push failed, checking git status:" >&2
+              git status >&2
+              echo "🔍 Debug: Remote URL:" >&2
+              git remote -v >&2
               return 1
             fi
           else
@@ -287,8 +302,9 @@ runs:
           exit 0
         fi
 
-        # 設定 PAT 環境變數
+        # 設定 PAT 環境變數和 repository 名稱
         export PAT_TOKEN="${{ inputs.pat_token }}"
+        export REPOSITORY_NAME="${{ env.REPOSITORY_NAME }}"
         
         # Process tasks
         RESULT=$(process_tasks "$TASK_DATA" "${{ inputs.status }}" "${{ inputs.branch_name }}" | tail -1)
