@@ -305,7 +305,7 @@ runs:
         # 設定 PAT 環境變數和 repository 名稱
         export PAT_TOKEN="${{ inputs.pat_token }}"
         export REPOSITORY_NAME="${{ env.REPOSITORY_NAME }}"
-        
+
         # Process tasks
         RESULT=$(process_tasks "$TASK_DATA" "${{ inputs.status }}" "${{ inputs.branch_name }}" | tail -1)
 
