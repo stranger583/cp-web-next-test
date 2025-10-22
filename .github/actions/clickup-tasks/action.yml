@@ -260,25 +260,30 @@ runs:
             echo "🔍 Debug: Git log --oneline -3:"
             git log --oneline -3
             
-            # 檢查是否有未推送的提交
-            echo "🔍 Debug: Checking for unpushed commits..."
-            UNPUSHED_COMMITS=$(git log origin/$target_branch..HEAD --oneline)
-            echo "🔍 Debug: Unpushed commits: $UNPUSHED_COMMITS"
-            
-            if [ -n "$UNPUSHED_COMMITS" ]; then
-              echo "🔍 Debug: Changes detected, attempting to push to origin $target_branch" >&2
-              if git push origin "$target_branch" >/dev/null 2>&1; then
-                echo "✅ Successfully pushed all $task_type changes" >&2
+            # 直接嘗試推送，讓 git 自己判斷是否有變更
+            echo "🔍 Debug: Attempting to push to origin $target_branch" >&2
+            if git push origin "$target_branch" >/dev/null 2>&1; then
+              echo "✅ Successfully pushed all $task_type changes" >&2
+            else
+              # 檢查推送失敗的原因
+              echo "🔍 Debug: Push failed, checking details..." >&2
+              echo "🔍 Debug: Git status:" >&2
+              git status >&2
+              echo "🔍 Debug: Git log --oneline -3:" >&2
+              git log --oneline -3 >&2
+              echo "🔍 Debug: Remote branches:" >&2
+              git branch -r >&2
+              echo "🔍 Debug: Remote URL:" >&2
+              git remote -v >&2
+              
+              # 嘗試強制推送
+              echo "🔍 Debug: Trying force push..." >&2
+              if git push origin "$target_branch" --force >/dev/null 2>&1; then
+                echo "✅ Successfully force pushed all $task_type changes" >&2
               else
-                echo "::error::❌ Failed to push $task_type changes" >&2
-                echo "🔍 Debug: Push failed, checking git status:" >&2
-                git status >&2
-                echo "🔍 Debug: Remote URL:" >&2
-                git remote -v >&2
+                echo "::error::❌ Failed to push $task_type changes even with force" >&2
                 return 1
               fi
-            else
-              echo "ℹ️ No changes to push (already up to date)" >&2
             fi
           else
             echo "⚠️ No $task_type changes to push" >&2
