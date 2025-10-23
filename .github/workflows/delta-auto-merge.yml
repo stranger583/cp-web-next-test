@@ -7,7 +7,7 @@ env:
   CLICKUP_API_TOKEN: ${{ secrets.CLICKUP_API_TOKEN }}
   CLICKUP_LIST_ID: ${{ secrets.CLICKUP_LIST_ID }}
   REPOSITORY_NAME: "cp-web-next-test"
-  BRANCH_PREFIX_DELTA: "delta/sprint"
+  BRANCH_PREFIX_DELTA: "delta/sprint-test"
   MAX_RETRY_ATTEMPTS: 3
 
 jobs:
@@ -111,7 +111,7 @@ jobs:
         with:
           merged_count: ${{ steps.process_delta.outputs.merged_count }}
           failed_count: ${{ steps.process_delta.outputs.failed_count }}
-          tag_name: "delta"
+          tag_name: "delta-test"
           branch_name: ${{ steps.create_delta.outputs.branch_name }}
           step_name: "delta"
           # 💡 新增這一行來傳遞 PAT
@@ -163,7 +163,7 @@ jobs:
           echo "   Tasks: $DELTA_MERGED/$DELTA_TOTAL"
           echo "   Failed: $DELTA_FAILED"
           if [ "$DELTA_TAG_MOVED" = "true" ]; then
-            echo "   Tag moved: delta"
+            echo "   Tag moved: delta-test"
           fi
 
           {
@@ -178,7 +178,7 @@ jobs:
             echo "**📈 Tasks:** $DELTA_MERGED/$DELTA_TOTAL merged"
             echo "**❌ Failed:** $DELTA_FAILED"
             if [ "$DELTA_TAG_MOVED" = "true" ]; then
-              echo "**🏷️ Tag:** \`delta\` (moved to current commit)"
+              echo "**🏷️ Tag:** \`delta-test\` (moved to current commit)"
             fi
             echo ""
             echo "**🕐 Timestamp:** $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
